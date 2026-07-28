@@ -1,0 +1,47 @@
+[project]
+name = "nonebot-plugin-autoytnoti"
+version = "0.1.0"
+description = "NoneBot2插件 - 监听YouTube频道更新并推送新视频通知给指定QQ用户"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "liuqiaochi", email = "liuqiaochi@wherecom.com"},
+]
+keywords = ["nonebot", "nonebot2", "youtube", "notification", "push", "monitor"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Framework :: Robot Framework",
+    "Framework :: Robot Framework :: Library",
+]
+
+[project.urls]
+Homepage = "https://github.com/liuqiaochi/nonebot_plugin_autoYTNoti"
+Repository = "https://github.com/liuqiaochi/nonebot_plugin_autoYTNoti"
+Issues = "https://github.com/liuqiaochi/nonebot_plugin_autoYTNoti/issues"
+
+dependencies = [
+    "nonebot2>=2.2.0",
+    "nonebot-adapter-onebot>=2.4.0",
+    "nonebot-plugin-apscheduler>=0.4.0",
+    "httpx>=0.24.0",
+    "pydantic>=2.0.0",
+    "Pillow>=10.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.nonebot]
+plugins = ["nonebot_plugin_autoYTNoti"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nonebot_plugin_autoYTNoti*"]
