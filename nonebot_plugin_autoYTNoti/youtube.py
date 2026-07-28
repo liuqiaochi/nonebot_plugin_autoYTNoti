@@ -15,6 +15,14 @@ RSS_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 API_BASE = "https://www.googleapis.com/youtube/v3"
 
 
+def _get_client_kwargs() -> dict:
+    """获取 httpx 客户端公共参数（含代理配置）"""
+    kwargs: dict = {"timeout": 30}
+    if plugin_config.yt_proxy:
+        kwargs["proxy"] = plugin_config.yt_proxy
+    return kwargs
+
+
 async def resolve_channel_id(handle: str) -> Optional[str]:
     """
     通过 handle（如 StarSavior_EN）解析出 channel_id。
@@ -31,7 +39,7 @@ async def resolve_channel_id(handle: str) -> Optional[str]:
         "key": plugin_config.yt_api_key,
     }
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(**_get_client_kwargs()) as client:
         resp = await client.get(url, params=params)
         if resp.status_code != 200:
             return None
@@ -49,7 +57,7 @@ async def fetch_latest_video_ids(channel_id: str, limit: int = 5) -> List[str]:
     """
     url = RSS_URL.format(channel_id=channel_id)
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(**_get_client_kwargs()) as client:
         resp = await client.get(url)
         if resp.status_code != 200:
             return []
@@ -102,7 +110,7 @@ async def _fetch_shorts_ids(channel_id: str) -> Set[str]:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(**_get_client_kwargs()) as client:
             resp = await client.get(url, params=params)
             if resp.status_code != 200:
                 return set()
@@ -142,7 +150,7 @@ async def get_video_details(
         "key": plugin_config.yt_api_key,
     }
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(**_get_client_kwargs()) as client:
         resp = await client.get(url, params=params)
         if resp.status_code != 200:
             return []
