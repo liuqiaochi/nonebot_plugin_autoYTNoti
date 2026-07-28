@@ -1,37 +1,95 @@
 """指令处理"""
 
 from nonebot import on_command
-from nonebot.adapters.onebot.v11 import Bot, MessageEvent, MessageSegment
+from nonebot.adapters.onebot.v11 import (
+    Bot,
+    GroupMessageEvent,
+    MessageEvent,
+    MessageSegment,
+    Message,
+)
 from nonebot.params import CommandArg
-from nonebot.adapters.onebot.v11 import Message
 from nonebot.permission import SUPERUSER
 
 from .models import ChannelData, load_data, save_data
 from .render import text_to_image_b64
 from .youtube import resolve_channel_id
 
+
+# ========== 工具函数 ==========
+
+
+def _cmd(name: str, **kwargs):
+    """注册指令，自动添加大小写变体aliases"""
+    # 生成大小写变体：YT -> yt, Yt, yT
+    aliases = set()
+    # 将"YT"部分替换为各种大小写组合
+    suffix = name[2:]  # 去掉 "YT" 前缀
+    for prefix in ("yt", "Yt", "yT"):
+        aliases.add(f"{prefix}{suffix}")
+    return on_command(name, aliases=aliases, **kwargs)
+
+
 # ========== 监听管理 ==========
 
-yt_watch_add = on_command("YT监听添加", permission=SUPERUSER, priority=5, block=True)
-yt_watch_del = on_command("YT监听删除", permission=SUPERUSER, priority=5, block=True)
+yt_watch_add = _cmd("YT监听添加", permission=SUPERUSER, priority=5, block=True)
+yt_watch_del = _cmd("YT监听删除", permission=SUPERUSER, priority=5, block=True)
 
 # ========== 推送用户管理 ==========
 
-yt_push_add = on_command("YT推送添加", permission=SUPERUSER, priority=5, block=True)
-yt_push_del = on_command("YT推送删除", permission=SUPERUSER, priority=5, block=True)
+yt_push_add = _cmd("YT推送添加", permission=SUPERUSER, priority=5, block=True)
+yt_push_del = _cmd("YT推送删除", permission=SUPERUSER, priority=5, block=True)
 
 # ========== 配置管理 ==========
 
-yt_config = on_command("YT配置", permission=SUPERUSER, priority=5, block=True)
-yt_list = on_command("YT列表", permission=SUPERUSER, priority=5, block=True)
+yt_config = _cmd("YT配置", permission=SUPERUSER, priority=5, block=True)
+yt_list = _cmd("YT列表", permission=SUPERUSER, priority=5, block=True)
 
 # ========== 查看与帮助 ==========
 
-yt_watch_list = on_command("YT查看监听", permission=SUPERUSER, priority=5, block=True)
-yt_help = on_command("YT帮助", permission=SUPERUSER, priority=5, block=True)
+yt_watch_list = _cmd("YT查看监听", permission=SUPERUSER, priority=5, block=True)
+yt_help = _cmd("YT帮助", permission=SUPERUSER, priority=5, block=True)
+
+
+# ========== 合并转发工具 ==========
+
+
+async def _send_forward_msg(bot: Bot, event: MessageEvent, messages: list):
+    """
+    发送合并转发消息。
+    messages: list of str 或 MessageSegment，每条作为转发中的一个节点。
+    """
+    bot_info = await bot.get_login_info()
+    bot_name = bot_info.get("nickname", "YT通知")
+    bot_id = str(bot_info.get("user_id", bot.self_id))
+
+    forward_nodes = []
+    for msg_content in messages:
+        forward_nodes.append({
+            "type": "node",
+            "data": {
+                "name": bot_name,
+                "uin": bot_id,
+                "content": str(msg_content) if isinstance(msg_content, str) else msg_content,
+            },
+        })
+
+    if isinstance(event, GroupMessageEvent):
+        await bot.call_api(
+            "send_group_forward_msg",
+            group_id=event.group_id,
+            messages=forward_nodes,
+        )
+    else:
+        await bot.call_api(
+            "send_private_forward_msg",
+            user_id=event.user_id,
+            messages=forward_nodes,
+        )
 
 
 # ---------- 监听添加 ----------
+
 
 @yt_watch_add.handle()
 async def handle_watch_add(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
@@ -67,6 +125,7 @@ async def handle_watch_add(bot: Bot, event: MessageEvent, args: Message = Comman
 
 # ---------- 监听删除 ----------
 
+
 @yt_watch_del.handle()
 async def handle_watch_del(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
     handle = args.extract_plain_text().strip().lstrip("@")
@@ -83,6 +142,7 @@ async def handle_watch_del(bot: Bot, event: MessageEvent, args: Message = Comman
 
 
 # ---------- 推送添加 ----------
+
 
 @yt_push_add.handle()
 async def handle_push_add(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
@@ -103,6 +163,7 @@ async def handle_push_add(bot: Bot, event: MessageEvent, args: Message = Command
 
 
 # ---------- 推送删除 ----------
+
 
 @yt_push_del.handle()
 async def handle_push_del(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
@@ -151,39 +212,43 @@ async def handle_config(bot: Bot, event: MessageEvent, args: Message = CommandAr
     await yt_config.finish(f"推送类型已更新为: {type_display}")
 
 
-# ---------- 列表查看 ----------
+# ---------- 列表查看（合并转发） ----------
+
 
 @yt_list.handle()
 async def handle_list(bot: Bot, event: MessageEvent):
     data = load_data()
 
-    lines = ["===== YouTube通知配置 ====="]
+    messages = []
 
-    # 监听频道
-    lines.append("\n📺 监听频道:")
+    # 第一条：监听频道
+    ch_lines = ["[ 监听频道 ]"]
     if data.channels:
-        for handle, ch in data.channels.items():
-            lines.append(f"  - {handle} ({ch.channel_id})")
+        for i, (handle, ch) in enumerate(data.channels.items(), 1):
+            ch_lines.append(f"{i}. @{handle}")
+            ch_lines.append(f"   ID: {ch.channel_id}")
     else:
-        lines.append("  (无)")
+        ch_lines.append("(无)")
+    messages.append("\n".join(ch_lines))
 
-    # 推送用户
-    lines.append("\n👤 推送用户:")
+    # 第二条：推送用户
+    user_lines = ["[ 推送用户 ]"]
     if data.push_users:
-        for uid in data.push_users:
-            lines.append(f"  - {uid}")
+        for i, uid in enumerate(data.push_users, 1):
+            user_lines.append(f"{i}. {uid}")
     else:
-        lines.append("  (无)")
+        user_lines.append("(无)")
+    messages.append("\n".join(user_lines))
 
-    # 推送类型
-    lines.append("\n📋 推送类型:")
-    type_display = " ".join(TYPE_NAMES.get(t, t) for t in data.push_types)
-    lines.append(f"  {type_display}")
+    # 第三条：推送类型
+    type_display = "、".join(TYPE_NAMES.get(t, t) for t in data.push_types)
+    messages.append(f"[ 推送类型 ]\n{type_display}")
 
-    await yt_list.finish("\n".join(lines))
+    await _send_forward_msg(bot, event, messages)
 
 
 # ---------- 查看监听（图片） ----------
+
 
 @yt_watch_list.handle()
 async def handle_watch_list(bot: Bot, event: MessageEvent):
@@ -191,7 +256,7 @@ async def handle_watch_list(bot: Bot, event: MessageEvent):
 
     lines = []
     if data.channels:
-        lines.append(f"共监听 {len(data.channels)} 个频道:")
+        lines.append(f"共监听 {len(data.channels)} 个频道")
         lines.append("")
         for i, (handle, ch) in enumerate(data.channels.items(), 1):
             lines.append(f"  {i}. @{handle}")
@@ -202,7 +267,7 @@ async def handle_watch_list(bot: Bot, event: MessageEvent):
 
     img_b64 = text_to_image_b64(
         "\n".join(lines),
-        title="📺 YouTube 监听列表",
+        title="YouTube 监听列表",
     )
     await yt_watch_list.finish(MessageSegment.image(img_b64))
 
@@ -210,43 +275,33 @@ async def handle_watch_list(bot: Bot, event: MessageEvent):
 # ---------- 帮助（图片） ----------
 
 HELP_TEXT = """\
-YT监听添加 <handle>
-  添加监听的YouTube频道
-  示例: YT监听添加 StarSavior_EN
+[监听管理]
+  YT监听添加 <handle>  添加监听频道
+  YT监听删除 <handle>  删除监听频道
 
-YT监听删除 <handle>
-  删除监听的YouTube频道
+[推送管理]
+  YT推送添加 <QQ号>    添加推送用户
+  YT推送删除 <QQ号>    删除推送用户
 
-YT推送添加 <QQ号>
-  添加推送目标用户
-  示例: YT推送添加 280035768
+[配置]
+  YT配置 <类型...>     设置推送类型
+    可选: 视频 / 短视频 / 直播
+    示例: YT配置 视频 短视频
 
-YT推送删除 <QQ号>
-  删除推送目标用户
+[查看]
+  YT查看监听           查看监听列表(图片)
+  YT列表               查看全部配置(转发)
+  YT帮助               显示本帮助(图片)
 
-YT配置 <类型...>
-  配置推送视频类型（空格分隔）
-  可选: 视频 短视频 直播
-  默认: 视频
-  示例: YT配置 视频 短视频
-
-YT查看监听
-  查看当前监听的频道列表（图片）
-
-YT列表
-  查看当前全部配置（文本）
-
-YT帮助
-  显示本帮助信息（图片）
-
-注: 所有指令仅超级用户可用"""
+* 指令不区分大小写 (YT/yt/Yt 均可)
+* 所有指令仅超级用户可用"""
 
 
 @yt_help.handle()
 async def handle_help(bot: Bot, event: MessageEvent):
     img_b64 = text_to_image_b64(
         HELP_TEXT,
-        title="📖 YT通知插件帮助",
-        font_size=18,
+        title="YT通知插件 - 帮助",
+        font_size=17,
     )
     await yt_help.finish(MessageSegment.image(img_b64))
