@@ -8,6 +8,7 @@ from nonebot.adapters.onebot.v11 import (
     MessageSegment,
     Message,
 )
+from nonebot.exception import FinishedException
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 
@@ -351,6 +352,8 @@ async def handle_test(bot: Bot, event: MessageEvent, args: Message = CommandArg(
             result += f"，失败 {fail_count} 人"
         await yt_test.finish(result)
 
+    except FinishedException:
+        raise
     except Exception as e:
         await yt_test.finish(f"测试失败: {e}")
 
