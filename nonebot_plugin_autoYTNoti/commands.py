@@ -7,7 +7,7 @@ from nonebot.adapters.onebot.v11 import Message
 from nonebot.permission import SUPERUSER
 
 from .models import ChannelData, load_data, save_data
-from .render import text_to_image
+from .render import text_to_image_b64
 from .youtube import resolve_channel_id
 
 # ========== 监听管理 ==========
@@ -200,11 +200,11 @@ async def handle_watch_list(bot: Bot, event: MessageEvent):
     else:
         lines.append("当前没有监听任何频道")
 
-    img_bytes = text_to_image(
+    img_b64 = text_to_image_b64(
         "\n".join(lines),
         title="📺 YouTube 监听列表",
     )
-    await yt_watch_list.finish(MessageSegment.image(img_bytes))
+    await yt_watch_list.finish(MessageSegment.image(img_b64))
 
 
 # ---------- 帮助（图片） ----------
@@ -244,9 +244,9 @@ YT帮助
 
 @yt_help.handle()
 async def handle_help(bot: Bot, event: MessageEvent):
-    img_bytes = text_to_image(
+    img_b64 = text_to_image_b64(
         HELP_TEXT,
         title="📖 YT通知插件帮助",
         font_size=18,
     )
-    await yt_help.finish(MessageSegment.image(img_bytes))
+    await yt_help.finish(MessageSegment.image(img_b64))

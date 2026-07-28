@@ -1,5 +1,6 @@
 """文本渲染为图片"""
 
+import base64
 import io
 from pathlib import Path
 from typing import List, Optional
@@ -137,3 +138,19 @@ def text_to_image(
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def text_to_image_b64(
+    text: str,
+    **kwargs,
+) -> str:
+    """
+    将文本渲染为图片并返回 base64 URI 字符串。
+    兼容各类 OneBot 协议端。
+
+    Returns:
+        "base64://xxxxx" 格式的字符串
+    """
+    img_bytes = text_to_image(text, **kwargs)
+    b64 = base64.b64encode(img_bytes).decode()
+    return f"base64://{b64}"
