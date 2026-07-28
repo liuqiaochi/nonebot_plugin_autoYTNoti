@@ -20,16 +20,17 @@ _✨ NoneBot2 YouTube 视频更新通知插件 ✨_
 
 ## 💿 安装
 
-使用 nb-cli 安装（推荐）：
+从 GitHub 安装：
 
 ```bash
-nb plugin install nonebot-plugin-autoytnoti
+pip install git+https://github.com/liuqiaochi/nonebot_plugin_autoYTNoti.git
 ```
 
-或使用 pip 安装：
+然后在 bot 的 `pyproject.toml` 中加载插件：
 
-```bash
-pip install nonebot-plugin-autoytnoti
+```toml
+[tool.nonebot]
+plugins = ["nonebot_plugin_autoYTNoti"]
 ```
 
 ## ⚙️ 配置
@@ -41,6 +42,7 @@ pip install nonebot-plugin-autoytnoti
 | `YT_API_KEY` | **是** | `""` | YouTube Data API v3 密钥 |
 | `YT_POLL_INTERVAL` | 否 | `300` | 轮询间隔（秒），默认 5 分钟 |
 | `YT_DATA_PATH` | 否 | `data/yt_noti/data.json` | 数据文件路径 |
+| `YT_PROXY` | 否 | `""` | HTTP 代理地址（国内服务器必填） |
 
 ### 获取 YouTube API Key
 
@@ -54,11 +56,14 @@ pip install nonebot-plugin-autoytnoti
 SUPERUSERS=["123456789"]
 YT_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 YT_POLL_INTERVAL=300
+YT_PROXY=http://127.0.0.1:7890
 ```
+
+> ⚠️ 国内服务器必须配置 `YT_PROXY`，否则无法访问 YouTube API 和图片 CDN。支持 `http://` 和 `socks5://` 格式。
 
 ## 🎉 使用
 
-> ⚠️ **所有指令仅超级用户可用**
+> ⚠️ **所有指令仅超级用户可用，指令不区分大小写（YT/yt/Yt 均可）**
 
 ### 频道监听管理
 
@@ -66,13 +71,14 @@ YT_POLL_INTERVAL=300
 |------|------|------|
 | `YT监听添加 <handle>` | 添加监听的 YouTube 频道 | `YT监听添加 StarSavior_EN` |
 | `YT监听删除 <handle>` | 删除监听的 YouTube 频道 | `YT监听删除 StarSavior_EN` |
+| `YT监听查看` | 以图片展示当前监听列表 | |
 
 ### 推送用户管理
 
 | 指令 | 说明 | 示例 |
 |------|------|------|
-| `YT推送添加 <QQ号>` | 添加推送目标用户 | `YT推送添加 280035768` |
-| `YT推送删除 <QQ号>` | 删除推送目标用户 | `YT推送删除 280035768` |
+| `YT推送添加 <QQ号/@人>` | 添加推送目标用户 | `YT推送添加 280035768` 或 `YT推送添加 @某人` |
+| `YT推送删除 <QQ号/@人>` | 删除推送目标用户 | `YT推送删除 @某人` |
 
 ### 推送类型配置
 
@@ -82,12 +88,12 @@ YT_POLL_INTERVAL=300
 
 可选类型：`视频`、`短视频`、`直播`，默认仅推送 `视频`。
 
-### 查看与帮助
+### 查看与工具
 
 | 指令 | 说明 |
 |------|------|
-| `YT查看监听` | 以图片展示当前监听的频道列表 |
-| `YT列表` | 查看当前全部配置 |
+| `YT列表` | 查看当前全部配置（合并转发） |
+| `YT测试 [handle]` | 测试推送有效性，获取频道最新视频发送给推送用户 |
 | `YT帮助` | 以图片展示帮助信息 |
 
 ## 🔧 工作原理
@@ -97,9 +103,21 @@ YT_POLL_INTERVAL=300
 3. 对新发现的视频调用 `videos.list` 获取详情，判断视频类型
 4. Shorts 识别：通过频道的 Shorts 专属播放列表（`UUSH` 前缀）判断
 5. 直播识别：通过 `snippet.liveBroadcastContent` 字段判断
-6. 将符合配置类型的新视频封面和链接推送给目标用户
+6. 封面图通过代理下载后以 base64 格式发送，无需协议端访问外网
+7. 将符合配置类型的新视频封面和链接推送给目标用户
 
 ## 📝 更新日志
+
+### v0.1.1
+
+- 指令不区分大小写（YT/yt/Yt 均可）
+- 推送添加/删除支持 @用户 自动获取 QQ 号
+- `YT监听查看` 统一指令格式
+- 新增 `YT测试` 指令验证推送有效性
+- `YT列表` 改为合并转发消息
+- 图片渲染美化（卡片式设计），去除 emoji 避免字体兼容问题
+- 封面图通过代理下载转 base64 发送，解决国内服务器图片超时
+- 新增 `YT_PROXY` 配置项支持 HTTP 代理
 
 ### v0.1.0
 
