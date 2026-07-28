@@ -10,7 +10,7 @@ from nonebot.adapters.onebot.v11 import Bot, MessageSegment
 
 from . import plugin_config
 from .models import load_data, save_data
-from .youtube import fetch_latest_video_ids, get_video_details, VideoInfo
+from .youtube import fetch_latest_video_ids, get_video_details, VideoInfo, download_image_b64
 
 
 async def _send_notification(bot: Bot, user_id: str, video: VideoInfo) -> None:
@@ -18,12 +18,14 @@ async def _send_notification(bot: Bot, user_id: str, video: VideoInfo) -> None:
     type_names = {"video": "视频", "short": "短视频", "live": "直播"}
     type_label = type_names.get(video.video_type, "视频")
 
-    msg = (
-        MessageSegment.text(f"🔔 YouTube新{type_label}更新！\n")
-        + MessageSegment.text(f"📺 {video.title}\n")
-        + MessageSegment.image(video.thumbnail_url)
-        + MessageSegment.text(f"\n🔗 {video.url}")
-    )
+    # 通过代理下载封面图转base64，避免协议端直接访问YouTube CDN
+    img_b64 = await download_image_b64(video.thumbnail_url)
+
+    msg = MessageSegment.text(f"[YT新{type_label}更新]\n")
+    msg += MessageSegment.text(f"{video.title}\n")
+    if img_b64:
+        msg += MessageSegment.image(img_b64)
+    msg += MessageSegment.text(f"\n{video.url}")
 
     try:
         await bot.send_private_msg(user_id=int(user_id), message=msg)

@@ -1,5 +1,6 @@
 """YouTube API 交互逻辑"""
 
+import base64
 import re
 from typing import List, Optional, Set, Tuple
 
@@ -191,3 +192,23 @@ async def get_video_details(
         )
 
     return results
+
+
+async def download_image_b64(url: str) -> Optional[str]:
+    """
+    通过代理下载图片并转为 base64://xxx 格式。
+    用于解决国内服务器无法访问 YouTube 图片 CDN 的问题。
+    返回 None 表示下载失败。
+    """
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(**_get_client_kwargs()) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return None
+            b64 = base64.b64encode(resp.content).decode()
+            return f"base64://{b64}"
+    except Exception as e:
+        logger.debug(f"下载图片失败 {url}: {e}")
+        return None

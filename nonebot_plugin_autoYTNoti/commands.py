@@ -13,7 +13,7 @@ from nonebot.permission import SUPERUSER
 
 from .models import ChannelData, load_data, save_data
 from .render import text_to_image_b64
-from .youtube import resolve_channel_id, fetch_latest_video_ids, get_video_details
+from .youtube import resolve_channel_id, fetch_latest_video_ids, get_video_details, download_image_b64
 
 
 # ========== 工具函数 ==========
@@ -326,12 +326,14 @@ async def handle_test(bot: Bot, event: MessageEvent, args: Message = CommandArg(
         type_names = {"video": "视频", "short": "短视频", "live": "直播"}
         type_label = type_names.get(video.video_type, "视频")
 
-        msg = (
-            MessageSegment.text(f"[测试推送] YouTube{type_label}\n")
-            + MessageSegment.text(f"{video.title}\n")
-            + MessageSegment.image(video.thumbnail_url)
-            + MessageSegment.text(f"\n{video.url}")
-        )
+        # 通过代理下载封面图转base64
+        img_b64 = await download_image_b64(video.thumbnail_url)
+
+        msg = MessageSegment.text(f"[测试推送] YouTube{type_label}\n")
+        msg += MessageSegment.text(f"{video.title}\n")
+        if img_b64:
+            msg += MessageSegment.image(img_b64)
+        msg += MessageSegment.text(f"\n{video.url}")
 
         # 推送给所有目标用户
         success_count = 0
