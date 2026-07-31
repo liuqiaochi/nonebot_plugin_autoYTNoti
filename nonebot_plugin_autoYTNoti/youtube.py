@@ -51,22 +51,78 @@ async def resolve_channel_id(handle: str) -> Optional[str]:
         return items[0]["id"]
 
 
-async def fetch_latest_video_ids(channel_id: str, limit: int = 5) -> List[str]:
+async def fetch_latest_video_ids(channel_id: str, limit: int = 15) -> List[str]:
     """
-    通过 RSS Feed 获取频道最近的视频 ID 列表。
-    不消耗 API 配额。
+    获取频道最近的视频 ID 列表。
+    优先通过 RSS Feed（不消耗配额），失败则回退到 API playlistItems。
     """
+    # 方案1: RSS Feed
+    video_ids = await _fetch_via_rss(channel_id, limit)
+    if video_ids:
+        return video_ids
+
+    # 方案2: 回退到 YouTube Data API（消耗配额）
+    logger.info(f"RSS获取失败，回退到API方式获取频道 {channel_id} 的视频列表")
+    video_ids = await _fetch_via_api(channel_id, limit)
+    return video_ids
+
+
+async def _fetch_via_rss(channel_id: str, limit: int) -> List[str]:
+    """通过 RSS Feed 获取视频ID列表"""
     url = RSS_URL.format(channel_id=channel_id)
 
-    async with httpx.AsyncClient(**_get_client_kwargs()) as client:
-        resp = await client.get(url)
-        if resp.status_code != 200:
-            return []
+    try:
+        async with httpx.AsyncClient(**_get_client_kwargs()) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                logger.warning(f"RSS请求失败: {url} -> 状态码 {resp.status_code}")
+                return []
+    except Exception as e:
+        logger.warning(f"RSS请求异常: {url} -> {e}")
+        return []
 
     # 从 XML 中提取 video ID
-    # RSS 中的格式: <yt:videoId>VIDEO_ID</yt:videoId>
     video_ids = re.findall(r"<yt:videoId>([^<]+)</yt:videoId>", resp.text)
+    logger.debug(f"RSS获取到 {len(video_ids)} 个视频ID (channel: {channel_id})")
     return video_ids[:limit]
+
+
+async def _fetch_via_api(channel_id: str, limit: int) -> List[str]:
+    """
+    通过 YouTube Data API playlistItems 获取频道上传播放列表。
+    频道上传播放列表 ID 为将 channel_id 的 "UC" 前缀替换为 "UU"。
+    """
+    if not channel_id.startswith("UC"):
+        return []
+
+    uploads_playlist_id = "UU" + channel_id[2:]
+
+    url = f"{API_BASE}/playlistItems"
+    params = {
+        "part": "contentDetails",
+        "playlistId": uploads_playlist_id,
+        "maxResults": min(limit, 50),
+        "key": plugin_config.yt_api_key,
+    }
+
+    try:
+        async with httpx.AsyncClient(**_get_client_kwargs()) as client:
+            resp = await client.get(url, params=params)
+            if resp.status_code != 200:
+                logger.warning(f"API playlistItems 请求失败: 状态码 {resp.status_code}")
+                return []
+            data = resp.json()
+    except Exception as e:
+        logger.warning(f"API playlistItems 请求异常: {e}")
+        return []
+
+    video_ids = [
+        item["contentDetails"]["videoId"]
+        for item in data.get("items", [])
+        if "contentDetails" in item
+    ]
+    logger.debug(f"API获取到 {len(video_ids)} 个视频ID (channel: {channel_id})")
+    return video_ids
 
 
 class VideoInfo:
