@@ -104,13 +104,17 @@ async def handle_watch_add(bot: Bot, event: MessageEvent, args: Message = Comman
             f"无法解析频道 {clean_handle}，请确认handle正确且API Key已配置"
         )
 
+    # 添加时获取当前视频列表作为基线，避免首次轮询推送历史视频
+    current_ids = await fetch_latest_video_ids(channel_id, limit=15)
+
     data.channels[clean_handle] = ChannelData(
         handle=clean_handle,
         channel_id=channel_id,
+        last_video_ids=current_ids,
     )
     save_data(data)
     await yt_watch_add.finish(
-        f"已添加监听频道: {clean_handle}\n频道ID: {channel_id}"
+        f"已添加监听频道: {clean_handle}\n频道ID: {channel_id}\n已记录当前 {len(current_ids)} 个视频作为基线"
     )
 
 

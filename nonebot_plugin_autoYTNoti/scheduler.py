@@ -59,17 +59,28 @@ async def poll_youtube_updates():
             continue
 
         try:
-            # 获取最新视频ID列表
-            latest_ids = await fetch_latest_video_ids(channel.channel_id)
+            # 获取最新视频ID列表（取15条以防频繁发布遗漏）
+            latest_ids = await fetch_latest_video_ids(channel.channel_id, limit=15)
             if not latest_ids:
+                logger.debug(f"频道 {handle}: RSS返回为空")
                 continue
 
-            # 找出新视频
+            # 首次轮询：记录当前视频但不推送（避免添加频道时疯狂推送历史视频）
+            if not channel.last_video_ids:
+                logger.info(f"频道 {handle}: 首次轮询，记录当前 {len(latest_ids)} 个视频ID")
+                channel.last_video_ids = latest_ids[:15]
+                has_update = True
+                continue
+
+            # 找出新视频（不在已知列表中的）
             known_ids = set(channel.last_video_ids)
             new_ids = [vid for vid in latest_ids if vid not in known_ids]
 
             if not new_ids:
+                logger.debug(f"频道 {handle}: 没有新视频")
                 continue
+
+            logger.info(f"频道 {handle}: 发现 {len(new_ids)} 个新视频: {new_ids}")
 
             # 获取新视频详情（传入channel_id用于判断Shorts）
             videos = await get_video_details(new_ids, channel.channel_id)
@@ -79,13 +90,20 @@ async def poll_youtube_updates():
                 v for v in videos if v.video_type in data.push_types
             ]
 
+            logger.info(
+                f"频道 {handle}: {len(videos)} 个视频详情, "
+                f"类型过滤后剩 {len(filtered_videos)} 个 "
+                f"(配置类型: {data.push_types})"
+            )
+
             # 推送给所有目标用户
             for video in filtered_videos:
                 for user_id in data.push_users:
                     await _send_notification(bot, user_id, video)
 
-            # 更新已知视频ID（保留最近15条防止遗漏）
-            channel.last_video_ids = latest_ids[:15]
+            # 更新已知视频ID（合并新旧，保留最近15条）
+            merged_ids = list(dict.fromkeys(latest_ids + channel.last_video_ids))[:15]
+            channel.last_video_ids = merged_ids
             has_update = True
 
         except Exception as e:
