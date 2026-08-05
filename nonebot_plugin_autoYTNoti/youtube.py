@@ -1,16 +1,12 @@
 """YouTube API 交互逻辑"""
 
 import base64
-import re
-from typing import List, Optional, Set, Tuple
+from typing import List, Optional, Set
 
 import httpx
 from nonebot import logger
 
 from . import plugin_config
-
-# YouTube RSS Feed URL
-RSS_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 
 # YouTube Data API v3 端点
 API_BASE = "https://www.googleapis.com/youtube/v3"
@@ -29,7 +25,6 @@ async def resolve_channel_id(handle: str) -> Optional[str]:
     通过 handle（如 StarSavior_EN）解析出 channel_id。
     使用 YouTube Data API v3 channels.list 的 forHandle 参数。
     """
-    # 确保 handle 带 @ 前缀
     if not handle.startswith("@"):
         handle = f"@{handle}"
 
@@ -53,43 +48,7 @@ async def resolve_channel_id(handle: str) -> Optional[str]:
 
 async def fetch_latest_video_ids(channel_id: str, limit: int = 15) -> List[str]:
     """
-    获取频道最近的视频 ID 列表。
-    优先通过 RSS Feed（不消耗配额），失败则回退到 API playlistItems。
-    """
-    # 方案1: RSS Feed
-    video_ids = await _fetch_via_rss(channel_id, limit)
-    if video_ids:
-        return video_ids
-
-    # 方案2: 回退到 YouTube Data API（消耗配额）
-    logger.info(f"RSS获取失败，回退到API方式获取频道 {channel_id} 的视频列表")
-    video_ids = await _fetch_via_api(channel_id, limit)
-    return video_ids
-
-
-async def _fetch_via_rss(channel_id: str, limit: int) -> List[str]:
-    """通过 RSS Feed 获取视频ID列表"""
-    url = RSS_URL.format(channel_id=channel_id)
-
-    try:
-        async with httpx.AsyncClient(**_get_client_kwargs()) as client:
-            resp = await client.get(url)
-            if resp.status_code != 200:
-                logger.warning(f"RSS请求失败: {url} -> 状态码 {resp.status_code}")
-                return []
-    except Exception as e:
-        logger.warning(f"RSS请求异常: {url} -> {e}")
-        return []
-
-    # 从 XML 中提取 video ID
-    video_ids = re.findall(r"<yt:videoId>([^<]+)</yt:videoId>", resp.text)
-    logger.debug(f"RSS获取到 {len(video_ids)} 个视频ID (channel: {channel_id})")
-    return video_ids[:limit]
-
-
-async def _fetch_via_api(channel_id: str, limit: int) -> List[str]:
-    """
-    通过 YouTube Data API playlistItems 获取频道上传播放列表。
+    通过 YouTube Data API playlistItems 获取频道最新视频ID列表。
     频道上传播放列表 ID 为将 channel_id 的 "UC" 前缀替换为 "UU"。
     """
     if not channel_id.startswith("UC"):
@@ -109,11 +68,11 @@ async def _fetch_via_api(channel_id: str, limit: int) -> List[str]:
         async with httpx.AsyncClient(**_get_client_kwargs()) as client:
             resp = await client.get(url, params=params)
             if resp.status_code != 200:
-                logger.warning(f"API playlistItems 请求失败: 状态码 {resp.status_code}")
+                logger.warning(f"获取视频列表失败: 状态码 {resp.status_code}")
                 return []
             data = resp.json()
     except Exception as e:
-        logger.warning(f"API playlistItems 请求异常: {e}")
+        logger.warning(f"获取视频列表异常: {e}")
         return []
 
     video_ids = [
@@ -121,7 +80,7 @@ async def _fetch_via_api(channel_id: str, limit: int) -> List[str]:
         for item in data.get("items", [])
         if "contentDetails" in item
     ]
-    logger.debug(f"API获取到 {len(video_ids)} 个视频ID (channel: {channel_id})")
+    logger.debug(f"获取到 {len(video_ids)} 个视频ID (channel: {channel_id})")
     return video_ids
 
 
