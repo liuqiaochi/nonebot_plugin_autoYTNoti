@@ -18,3 +18,8 @@ class Config(BaseModel):
     # HTTP代理地址（用于访问YouTube/Google API）
     # 例如: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080
     yt_proxy: str = ""
+
+    # 监听时间段（24小时制），只在该区间内轮询和推送
+    # 默认 8:00 ~ 23:00
+    yt_active_start: int = 8
+    yt_active_end: int = 23

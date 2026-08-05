@@ -1,5 +1,7 @@
 """定时轮询与推送逻辑"""
 
+from datetime import datetime
+
 from nonebot import get_bot, logger, require
 
 require("nonebot_plugin_apscheduler")
@@ -11,6 +13,20 @@ from nonebot.adapters.onebot.v11 import Bot, MessageSegment
 from . import plugin_config
 from .models import load_data, save_data
 from .youtube import fetch_latest_video_ids, get_video_details, VideoInfo, download_image_b64
+
+
+def _is_active_time() -> bool:
+    """判断当前是否在监听活跃时间段内"""
+    now_hour = datetime.now().hour
+    start = plugin_config.yt_active_start
+    end = plugin_config.yt_active_end
+
+    if start <= end:
+        # 正常区间，如 8~23
+        return start <= now_hour < end
+    else:
+        # 跨午夜区间，如 22~6 表示 22:00 到次日 06:00
+        return now_hour >= start or now_hour < end
 
 
 async def _send_notification(bot: Bot, user_id: str, video: VideoInfo) -> None:
@@ -41,6 +57,14 @@ async def _send_notification(bot: Bot, user_id: str, video: VideoInfo) -> None:
 )
 async def poll_youtube_updates():
     """定时轮询YouTube频道更新"""
+    # 检查是否在活跃时间段内
+    if not _is_active_time():
+        logger.debug(
+            f"YouTube通知: 当前不在监听时段 "
+            f"({plugin_config.yt_active_start}:00~{plugin_config.yt_active_end}:00)，跳过"
+        )
+        return
+
     try:
         bot: Bot = get_bot()  # type: ignore
     except ValueError:
