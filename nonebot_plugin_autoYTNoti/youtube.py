@@ -14,7 +14,7 @@ API_BASE = "https://www.googleapis.com/youtube/v3"
 
 def _get_client_kwargs() -> dict:
     """获取 httpx 客户端公共参数（含代理配置）"""
-    kwargs: dict = {"timeout": 30}
+    kwargs: dict = {"timeout": 60}
     if plugin_config.yt_proxy:
         kwargs["proxy"] = plugin_config.yt_proxy
     return kwargs
