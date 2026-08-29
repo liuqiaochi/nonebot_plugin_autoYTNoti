@@ -89,6 +89,17 @@ def _ydl_opts(extra: Optional[Dict] = None) -> Dict:
     if plugin_config.yt_dl_ffmpeg:
         opts["ffmpeg_location"] = plugin_config.yt_dl_ffmpeg
 
+    # JS 运行时：yt-dlp 2026 需要 JS 运行时（默认仅 deno）来解 YouTube 的 JS 挑战题。
+    # 缺失时可用客户端会被降级为 _DEFAULT_JSLESS_CLIENTS（仅 visionos），
+    # 播放器返回 LOGIN_REQUIRED，最终表现为 "Sign in to confirm you're not a bot"。
+    # 留空则沿用 yt-dlp 默认（deno，从 PATH 查找）。
+    js_runtime = getattr(plugin_config, "yt_dl_js_runtime", "") or ""
+    if js_runtime.strip():
+        name, _, path = js_runtime.partition(":")
+        name, path = name.strip().lower(), path.strip()
+        if name:
+            opts["js_runtimes"] = {name: {"path": path} if path else {}}
+
     # 客户端策略：
     # - 未配置 cookie：使用 tv/web_embedded 电视客户端，免登录即可绕过 bot 检测，
     #   画质上限约 1080p（与 FeiTools 的 server 方案一致）

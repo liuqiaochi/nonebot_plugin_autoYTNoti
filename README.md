@@ -35,7 +35,10 @@ plugins = ["nonebot_plugin_autoYTNoti"]
 
 ## 🔧 前置依赖（必装）
 
-> ⚠️ **使用 `YT解析` / `YT下载` 指令前，必须确保以下两个组件已安装，否则指令无法正常工作。**
+> ⚠️ **使用 `YT解析` / `YT下载` 指令前，必须确保以下三个组件已安装，否则指令无法正常工作。**
+>
+> ❗ **其中 `deno` 最容易被忽略**：yt-dlp 2026 依赖 JavaScript 运行时解 YouTube 的挑战题，缺失时会退化为
+> `Sign in to confirm you're not a bot` 错误，且表现得很像"IP 被封"。若遇到该报错，**先查 deno**。
 
 ### 1. yt-dlp（Python 包）
 
@@ -81,6 +84,37 @@ ffmpeg -version
 
 若 `ffmpeg` 不在系统 `PATH` 中，请通过 `YT_DL_FFMPEG=/path/to/ffmpeg` 配置其绝对路径（见下方配置项）。
 
+### 3. deno（JavaScript 运行时，绕过 bot 检测必需）
+
+yt-dlp 2026 需要 **JavaScript 运行时**来执行 YouTube 播放器 JS、解开其反爬挑战题。**默认只启用 `deno`**（node / bun / quickjs 需显式指定）。
+
+缺少 JS 运行时时，yt-dlp 可用播放器客户端会被降级为仅 `visionos`，播放器返回 `LOGIN_REQUIRED`，最终报错：
+
+```
+ERROR: [youtube] xxxxx: Sign in to confirm you're not a bot.
+```
+
+**安装 deno：**
+
+```bash
+curl -fsSL https://deno.land/install.sh | sh
+# 安装到 ~/.deno/bin，按提示将其加入 PATH（或重开终端）
+```
+
+安装后验证：
+
+```bash
+deno --version
+# 并确认 yt-dlp 能识别到（应显示 JS runtimes: deno-x.x.x 而非 none）
+yt-dlp -v --simulate "https://www.youtube.com/watch?v=xxxxxxxxxxx" 2>&1 | grep "JS runtimes"
+```
+
+> ⚠️ **以 systemd / 后台服务方式运行 bot 时**，服务环境的 `PATH` 通常不含 `~/.deno/bin`，yt-dlp 仍会找不到 deno。
+> 此时请在 `.env` 显式指定绝对路径：
+> ```env
+> YT_DL_JS_RUNTIME=deno:/home/laofei/.deno/bin/deno
+> ```
+
 ## ⚙️ 配置
 
 在 `.env` 文件中添加以下配置项：
@@ -94,6 +128,7 @@ ffmpeg -version
 | `YT_DL_DIR` | 否 | `data/yt_downloads` | yt-dlp 下载目录（相对于 bot 根目录） |
 | `YT_DL_FORMAT` | 否 | `bestvideo+bestaudio/best` | yt-dlp 视频格式选择器（ffmpeg 合并为 mp4） |
 | `YT_DL_FFMPEG` | 否 | `""` | ffmpeg 可执行文件绝对路径，留空则使用系统 PATH 中的 ffmpeg |
+| `YT_DL_JS_RUNTIME` | 否 | `""` | JS 运行时，格式 `deno` 或 `deno:/绝对路径/deno`。留空则由 yt-dlp 从 PATH 查找 deno；**systemd 服务环境建议显式指定绝对路径** |
 | `YT_DL_COOKIES` | 否 | `""` | YouTube cookies 文件（cookies.txt）【可选】。默认免 cookie（tv 客户端，≤1080p）；配置后可切回 web 客户端获取最高画质 |
 | `YT_DL_COOKIES_BROWSER` | 否 | `""` | 从本机已登录浏览器直读 cookies（如 chrome/firefox/safari）【可选】，效果同上 |
 
@@ -172,7 +207,59 @@ YT_PROXY=http://127.0.0.1:7890
   - 结果以**合并转发**形式回传：封面图节点（含元信息）+ 视频节点；发送失败会自动回退为逐条发送并提示本地路径。
 - 支持**直接发送链接**，也支持**回复 / 引用**一条含链接的消息触发指令。
 - 视频格式由 `YT_DL_FORMAT` 控制，合并依赖 `ffmpeg`（需位于 PATH，或用 `YT_DL_FFMPEG` 指定绝对路径）；下载/解析/封面均复用 `YT_PROXY` 代理。
-- **默认免 cookie**：YouTube 使用 `tv/web_embedded` 电视客户端，天然绕过 `Sign in to confirm you're not a bot` 检测，无需任何登录态即可下载（画质上限约 1080p）。前置依赖 `yt-dlp` 与 `ffmpeg` 的安装方式，详见上方「🔧 前置依赖（必装）」小节。
+- **默认免 cookie**：YouTube 使用 `tv/web_embedded` 电视客户端，天然绕过 `Sign in to confirm you're not a bot` 检测，无需任何登录态即可下载（画质上限约 1080p）。前置依赖 `yt-dlp`、`ffmpeg` 与 `deno` 的安装方式，详见上方「🔧 前置依赖（必装）」小节。
+
+#### 排障：出现「Sign in to confirm you're not a bot」
+
+YouTube 风控持续调整，且**重点封禁机房/数据中心 IP**。按以下顺序排查：
+
+**0. 先确认 JS 运行时（deno）已安装 —— 最易被忽略，症状与本错误完全一致**
+
+```bash
+yt-dlp -v --simulate "https://www.youtube.com/watch?v=xxxxxxxxxxx" 2>&1 | grep "JS runtimes"
+```
+
+- 输出 `JS runtimes: none` → **根因就是它**。装 deno（见「🔧 前置依赖（必装）」第 3 节）；
+  若 bot 以 systemd 运行，还需配 `YT_DL_JS_RUNTIME=deno:/home/<user>/.deno/bin/deno`。
+
+  原理：缺 JS 运行时时，yt-dlp 可用客户端被降级为仅 `visionos`，播放器返回 `LOGIN_REQUIRED`，
+  最终报出本错误——**与"IP 被封"的表现完全相同，但解法完全不同**。
+- 输出 `JS runtimes: deno-x.x.x` → 运行时正常，继续下一步。
+
+**1. 升级 yt-dlp** —— YouTube 改版后旧版必然失效：
+
+```bash
+pip install -U yt-dlp
+yt-dlp --version
+```
+
+**2. 清理 yt-dlp 缓存** —— 风控挑战的求解结果会过期：
+
+```bash
+yt-dlp --rm-cache-dir
+```
+
+**3. 轮换播放器客户端** —— 把 `YT_DL_PLAYER_CLIENTS` 换成其他组合（需 v0.1.5+）：
+
+```env
+YT_DL_PLAYER_CLIENTS=visionos,tv,tv_downgraded,web_embedded,mweb
+```
+
+可用值：`tv` / `tv_downgraded` / `tv_simply` / `web` / `web_safari` / `web_embedded` / `web_music` / `web_creator` / `mweb` / `android` / `android_vr` / `ios` / `visionos`
+（以安装的 yt-dlp 版本为准；`web` 最易触发检测，不要放在前面。）
+
+> ⚠️ 填了无效名称会被 yt-dlp 静默跳过并回退默认客户端，表现就是「明明改了配置却仍报 bot 错误」。
+
+**4. 使用 PO Token 服务（机房 IP 的根本解法）** —— 若服务器 IP 已被标记，换客户端无效。
+`bgutil-ytdlp-pot-provider` 动态生成 Proof-of-Origin 令牌，无需账号/cookie：
+
+```bash
+pip install bgutil-ytdlp-pot-provider
+# 服务端默认监听 127.0.0.1:4416，启动后设置环境变量再重启 bot
+export YT_DLP_POT_PROVIDER_URL=http://127.0.0.1:4416
+```
+
+**5. 兜底：配置 cookies** —— 见下一小节。cookies 有效期有限，需定期重新导出，故优先级最低。
 
 #### 可选增强：使用 cookies 获取最高画质（4K/HDR）
 
@@ -183,6 +270,12 @@ YT_PROXY=http://127.0.0.1:7890
 - 两者二选一（优先 cookies 文件）；解析与下载均会复用该登录态。cookies 过期后需重新导出。
 
 ## 📝 更新日志
+
+### v0.1.5
+
+- **修复 bot 检测的真实根因：缺少 JS 运行时（deno）**。yt-dlp 2026 依赖 JS 运行时解 YouTube 播放器挑战题，默认只启用 deno。缺失时可用客户端被降级为仅 `visionos`，播放器返回 `LOGIN_REQUIRED`，最终报 `Sign in to confirm you're not a bot`——**与"IP 被封"表现完全相同但解法完全不同**。此前多轮改动均未触及此点
+- 新增 `YT_DL_JS_RUNTIME` 配置项（格式 `deno` 或 `deno:/绝对路径/deno`）。留空则沿用 yt-dlp 默认（从 PATH 查找 deno）；**systemd 等服务环境 PATH 不含 `~/.deno/bin`，需显式指定绝对路径**
+- README：deno 提升为「🔧 前置依赖（必装）」第 3 项（与 yt-dlp、ffmpeg 并列）；排障小节重建，并将「先查 deno」置于第 0 步
 
 ### v0.1.4
 

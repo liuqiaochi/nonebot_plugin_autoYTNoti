@@ -35,6 +35,16 @@ class Config(BaseModel):
     # 留空则使用系统 PATH 中的 ffmpeg；若未安装可填写绝对路径，如 /usr/bin/ffmpeg
     yt_dl_ffmpeg: str = ""
 
+    # JavaScript 运行时【必装，yt-dlp 2026 依赖它解 YouTube 的 JS 挑战题】
+    # 默认只会启用 deno（node/bun/quickjs 需显式指定）。缺失时可用播放器客户端会被
+    # 降级为仅 visionos，播放器返回 LOGIN_REQUIRED，最终报
+    # "Sign in to confirm you're not a bot"。
+    # 安装：curl -fsSL https://deno.land/install.sh | sh
+    # 留空：由 yt-dlp 从 PATH 查找 deno（交互式终端可用）
+    # 指定路径：systemd 等服务环境的 PATH 常不含 ~/.deno/bin，需显式给绝对路径，例如
+    #   deno:/home/laofei/.deno/bin/deno
+    yt_dl_js_runtime: str = ""
+
     # YouTube 登录态 cookies【可选增强，非必需】
     # 默认（不配置）已通过 tv/web_embedded 电视客户端免登录绕过 bot 检测（画质上限约 1080p）
     # 仅在需要 4K/HDR 等最高画质时，才配置以下其一以切回 web 客户端：
