@@ -1,6 +1,8 @@
 """定时轮询与推送逻辑"""
 
+import asyncio
 from datetime import datetime
+from pathlib import Path
 
 from nonebot import get_bot, logger, require
 
@@ -135,3 +137,37 @@ async def poll_youtube_updates():
 
     if has_update:
         save_data(data)
+
+
+@scheduler.scheduled_job(
+    "cron",
+    hour=0,
+    minute=0,
+    id="yt_dl_dir_cleanup",
+    misfire_grace_time=300,
+)
+async def cleanup_yt_downloads():
+    """每天0点清理下载目录中的历史封面和视频文件"""
+    dl_dir = Path(plugin_config.yt_dl_dir).resolve()
+    if not dl_dir.is_dir():
+        return
+
+    def _cleanup() -> int:
+        removed = 0
+        for f in dl_dir.iterdir():
+            if f.is_file():
+                try:
+                    f.unlink()
+                    removed += 1
+                except OSError as e:
+                    logger.warning(f"清理下载目录失败 {f}: {e}")
+        return removed
+
+    try:
+        removed = await asyncio.to_thread(_cleanup)
+    except Exception as e:
+        logger.error(f"清理下载目录 {dl_dir} 失败: {e}")
+        return
+
+    if removed:
+        logger.info(f"YouTube下载目录已清理: 删除 {removed} 个文件 ({dl_dir})")
