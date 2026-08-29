@@ -1,6 +1,6 @@
 [project]
 name = "nonebot-plugin-autoytnoti"
-version = "0.1.4"
+version = "0.1.5"
 description = "NoneBot2插件 - 监听YouTube频道更新并推送新视频通知给指定QQ用户"
 readme = "README.md"
 requires-python = ">=3.9"

@@ -6,8 +6,9 @@
 - thumbnail_b64_best(id):  获取视频最优封面图（maxres）的 base64，用于即时展示
 
 特性：
-- 默认免 cookie：YouTube 使用 tv/web_embedded 客户端（电视端 API），天然绕过
-  "Sign in to confirm you're not a bot" 检测，画质上限约 1080p
+- 默认免 cookie：轮换 YouTube 播放器客户端（默认 tv/tv_downgraded/web_embedded/mweb），
+  绕过 "Sign in to confirm you're not a bot" 检测，画质上限约 1080p。
+  客户端列表由 YT_DL_PLAYER_CLIENTS 配置，YouTube 策略变化时改配置即可。
 - 可选增强：在 .env 配置 YT_DL_COOKIES / YT_DL_COOKIES_BROWSER 后，自动切回 web
   客户端并注入登录态，可获取 4K/HDR 等最高画质
 - 视频使用 ffmpeg 合并最佳视频流 + 最佳音频流（mp4）
@@ -103,14 +104,28 @@ def _ydl_opts(extra: Optional[Dict] = None) -> Dict:
             # cookiesfrombrowser 接受 (browser, profile_key, profile_name, cookie_file) 元组
             opts["cookiesfrombrowser"] = (_ck_browser,)
     else:
-        # 默认免 cookie：tv/web_embedded 客户端绕过 "Sign in to confirm you're not a bot"
-        opts["extractor_args"] = {
-            "youtube": {"player_client": "web_embedded,tv"}
-        }
+        # 默认免 cookie：轮换使用电视/嵌入式/移动 web 客户端，绕过
+        # "Sign in to confirm you're not a bot" 检测（画质上限约 1080p）
+        clients = _player_clients()
+        if clients:
+            opts["extractor_args"] = {"youtube": {"player_client": clients}}
 
     if extra:
         opts.update(extra)
     return opts
+
+
+def _player_clients() -> list:
+    """
+    将配置项 yt_dl_player_clients（逗号分隔字符串）解析为 yt-dlp 所需的列表。
+
+    重要：yt-dlp 的 Python API 中 extractor_args 的值必须是 list。
+    若传入 "tv,web_embedded" 这样的逗号分隔字符串，其内部扁平化逻辑会把字符串
+    逐字符拆成 ['t','v',',',...]（与 CLI 的 --extractor-args 行为不同），
+    导致所有客户端名无效而被跳过，最终回退默认 web 客户端并触发 bot 检测。
+    """
+    raw = getattr(plugin_config, "yt_dl_player_clients", "") or ""
+    return [c.strip() for c in raw.split(",") if c.strip()]
 
 
 def _format_duration(seconds) -> str:
