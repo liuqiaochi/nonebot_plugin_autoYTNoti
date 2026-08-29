@@ -92,8 +92,10 @@ ffmpeg -version
 | `YT_DATA_PATH` | 否 | `data/yt_noti/data.json` | 数据文件路径 |
 | `YT_PROXY` | 否 | `""` | HTTP 代理地址（国内服务器必填） |
 | `YT_DL_DIR` | 否 | `data/yt_downloads` | yt-dlp 下载目录（相对于 bot 根目录） |
-| `YT_DL_FORMAT` | 否 | `bestvideo+bestaudio/best` | yt-dlp 视频格式选择器（默认最高画质，ffmpeg 合并为 mp4） |
+| `YT_DL_FORMAT` | 否 | `bestvideo+bestaudio/best` | yt-dlp 视频格式选择器（ffmpeg 合并为 mp4） |
 | `YT_DL_FFMPEG` | 否 | `""` | ffmpeg 可执行文件绝对路径，留空则使用系统 PATH 中的 ffmpeg |
+| `YT_DL_COOKIES` | 否 | `""` | YouTube cookies 文件（cookies.txt）【可选】。默认免 cookie（tv 客户端，≤1080p）；配置后可切回 web 客户端获取最高画质 |
+| `YT_DL_COOKIES_BROWSER` | 否 | `""` | 从本机已登录浏览器直读 cookies（如 chrome/firefox/safari）【可选】，效果同上 |
 
 ### 获取 YouTube API Key
 
@@ -146,7 +148,7 @@ YT_PROXY=http://127.0.0.1:7890
 | `YT列表` | 查看当前全部配置（合并转发） |
 | `YT测试 [handle]` | 测试推送有效性，获取频道最新视频发送给推送用户 |
 | `YT解析 <链接>` | 解析 YouTube 链接，返回标题/频道/时长/播放量/发布日期与封面图（不下载） |
-| `YT下载 <链接>` | 使用 yt-dlp 下载视频（最高画质，ffmpeg 合并）与最优封面图，以合并转发形式回传 |
+| `YT下载 <链接>` | 使用 yt-dlp 下载视频（ffmpeg 合并为 mp4）与最优封面图，以合并转发形式回传 |
 
 > 以上两条指令支持**直接发送链接**，也支持**回复 / 引用**一条含链接的消息来触发（无需在指令后手动贴链接）。
 | `YT帮助` | 以图片展示帮助信息 |
@@ -165,14 +167,28 @@ YT_PROXY=http://127.0.0.1:7890
 
 - `YT解析 <链接>`：调用 yt-dlp 解析任意 YouTube 链接（watch / youtu.be / shorts 等），返回标题、频道、时长、播放量、发布日期及**最优封面图**，**不下载文件**。
 - `YT下载 <链接>`：调用 yt-dlp 将视频与封面图下载到 `YT_DL_DIR` 目录。
-  - **视频**：默认 `bestvideo+bestaudio/best`（最高画质），由 ffmpeg 合并最高画质视频流与最高音质音频流为 mp4。
+  - **视频**：默认 `bestvideo+bestaudio/best`，由 ffmpeg 合并最佳视频流与最佳音频流为 mp4。默认走 tv 客户端，**画质上限约 1080p**（免 cookie，开箱即用）。
   - **封面图**：优先取 YouTube `maxresdefault`（最高清），缺失时回退 `hqdefault`。
   - 结果以**合并转发**形式回传：封面图节点（含元信息）+ 视频节点；发送失败会自动回退为逐条发送并提示本地路径。
 - 支持**直接发送链接**，也支持**回复 / 引用**一条含链接的消息触发指令。
 - 视频格式由 `YT_DL_FORMAT` 控制，合并依赖 `ffmpeg`（需位于 PATH，或用 `YT_DL_FFMPEG` 指定绝对路径）；下载/解析/封面均复用 `YT_PROXY` 代理。
-- 前置依赖 `yt-dlp` 与 `ffmpeg` 的安装方式，详见上方「🔧 前置依赖（必装）」小节。
+- **默认免 cookie**：YouTube 使用 `tv/web_embedded` 电视客户端，天然绕过 `Sign in to confirm you're not a bot` 检测，无需任何登录态即可下载（画质上限约 1080p）。前置依赖 `yt-dlp` 与 `ffmpeg` 的安装方式，详见上方「🔧 前置依赖（必装）」小节。
+
+#### 可选增强：使用 cookies 获取最高画质（4K/HDR）
+
+默认 `tv` 客户端的画质上限约 1080p。如需 4K/HDR 等更高规格，可提供已登录 YouTube 账号的 cookies，将自动切回 `web` 客户端：
+
+- **方式一（推荐，服务器通用）**：在本地已登录 YouTube 的浏览器中用扩展（如「Get cookies.txt」/「cookie-editor」）导出 `cookies.txt`，上传到服务器，配置 `YT_DL_COOKIES=/path/cookies.txt`。
+- **方式二（需服务器装有浏览器）**：配置 `YT_DL_COOKIES_BROWSER=chrome`（可选 `chrome` / `chromium` / `firefox` / `safari` / `edge` 等），由 yt-dlp 直接从本机已登录浏览器读取 cookies。
+- 两者二选一（优先 cookies 文件）；解析与下载均会复用该登录态。cookies 过期后需重新导出。
 
 ## 📝 更新日志
+
+### v0.1.4
+
+- **默认免 cookie 下载**：YouTube 改用 `tv/web_embedded` 电视客户端，天然绕过 `Sign in to confirm you're not a bot` 检测，开箱即用（画质上限约 1080p）
+- `YT_DL_COOKIES` / `YT_DL_COOKIES_BROWSER` 降为**可选增强**：仅在需要 4K/HDR 最高画质时配置，自动切回 `web` 客户端并注入登录态
+- README 同步更新 bot 检测说明与 cookies 导出指引
 
 ### v0.1.3
 
