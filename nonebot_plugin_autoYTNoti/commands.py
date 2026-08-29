@@ -426,7 +426,7 @@ HELP_TEXT = """\
 
 [按需解析/下载]
   YT解析 <链接>        解析链接,返回标题/频道/时长/播放量/封面
-  YT下载 <链接>        下载视频与封面图(封面转发送,视频随后直发)
+  YT下载 <链接>        下载视频与封面图(两条消息直发:封面+视频)
     链接支持直接发送,也可回复/引用含链接的消息
     默认免cookie(≤1080p),配YT_DL_COOKIES可获最高画质
 
@@ -526,7 +526,7 @@ async def handle_dl(bot: Bot, event: MessageEvent, args: Message = CommandArg())
     thumb_path = result.get("thumb_path")
     output_dir = result.get("output_dir")
 
-    # 封面图 + 元信息以合并转发形式返回（图片/文本在转发中表现正常）
+    # 以两条直发消息返回（不使用合并转发）：① 封面图 + 元信息 ② 视频
     info_text = (
         f"[YouTube 下载完成]\n"
         f"标题: {summary['title']}\n"
@@ -537,15 +537,9 @@ async def handle_dl(bot: Bot, event: MessageEvent, args: Message = CommandArg())
     cover_node = MessageSegment.text(info_text)
     if thumb_path:
         cover_node += MessageSegment.image(thumb_path)
+    await yt_dl.send(cover_node)
 
-    try:
-        await _send_forward_msg(bot, event, [cover_node])
-    except Exception as e:
-        logger.error(f"合并转发发送失败: {e}，回退为逐条发送封面")
-        await yt_dl.send(cover_node)
-
-    # 视频不放入转发节点：go-cqhttp 在转发中上传的视频会显示为「已过期」，
-    # 改为转发之后单独直发，QQ 客户端可正常上传与播放
+    # 视频单独直发，QQ 客户端可正常上传与播放
     if video_path:
         try:
             await yt_dl.send(MessageSegment.video(video_path))
