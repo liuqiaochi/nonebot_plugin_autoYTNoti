@@ -1,5 +1,7 @@
 """指令处理"""
 
+import re
+
 from nonebot import on_command, logger
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -15,6 +17,14 @@ from nonebot.permission import SUPERUSER
 from .models import ChannelData, load_data, save_data
 from .render import text_to_image_b64
 from .youtube import resolve_channel_id, fetch_latest_video_ids, get_video_details, download_image_b64
+from .downloader import (
+    parse_youtube,
+    download_youtube,
+    thumbnail_b64_best,
+    _is_youtube_url,
+    _require_yt_dlp,
+    _find_url,
+)
 
 
 # ========== 工具函数 ==========
@@ -27,6 +37,33 @@ def _cmd(name: str, **kwargs):
     for prefix in ("yt", "Yt", "yT"):
         aliases.add(f"{prefix}{suffix}")
     return on_command(name, aliases=aliases, **kwargs)
+
+
+def _extract_youtube_url(event, args: Message) -> str:
+    """
+    从指令参数或被引用/回复的消息中提取 YouTube 链接。
+    支持直接发送链接，也支持「回复 / 引用」一条含链接的消息触发。
+    """
+    # 1) 优先从指令参数文本中取
+    url = _find_url(args.extract_plain_text())
+    if url:
+        return url
+
+    # 2) 从被引用 / 回复的消息中取
+    reply = getattr(event, "reply", None)
+    if reply is not None:
+        # 情况A：reply 本身就是 Message 对象
+        if hasattr(reply, "extract_plain_text"):
+            url = _find_url(reply.extract_plain_text())
+            if url:
+                return url
+        # 情况B：reply.message 是 Message 对象
+        msg = getattr(reply, "message", None)
+        if msg is not None and hasattr(msg, "extract_plain_text"):
+            url = _find_url(msg.extract_plain_text())
+            if url:
+                return url
+    return ""
 
 
 # ========== 指令注册 ==========
@@ -42,6 +79,9 @@ yt_config = _cmd("YT配置", permission=SUPERUSER, priority=5, block=True)
 yt_list = _cmd("YT列表", permission=SUPERUSER, priority=5, block=True)
 yt_test = _cmd("YT测试", permission=SUPERUSER, priority=5, block=True)
 yt_help = _cmd("YT帮助", permission=SUPERUSER, priority=5, block=True)
+
+yt_parse = _cmd("YT解析", permission=SUPERUSER, priority=5, block=True)
+yt_dl = _cmd("YT下载", permission=SUPERUSER, priority=5, block=True)
 
 
 # ========== 合并转发工具 ==========
@@ -397,3 +437,120 @@ async def handle_help(bot: Bot, event: MessageEvent):
         font_size=17,
     )
     await yt_help.finish(MessageSegment.image(img_b64))
+
+
+# ---------- 链接解析（仅元信息，不下载） ----------
+
+
+@yt_parse.handle()
+async def handle_parse(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
+    url = _extract_youtube_url(event, args)
+    if not url:
+        await yt_parse.finish(
+            "未找到YouTube链接。可直接发送链接，或回复/引用一条含链接的消息。\n"
+            "示例：YT解析 https://www.youtube.com/watch?v=xxxxxxxxxxx"
+        )
+
+    if not _is_youtube_url(url):
+        await yt_parse.finish("链接似乎不是YouTube链接，请检查后重试")
+
+    try:
+        _require_yt_dlp()
+    except RuntimeError as e:
+        await yt_parse.finish(str(e))
+
+    await yt_parse.send("正在解析链接...")
+
+    try:
+        summary = await parse_youtube(url)
+    except Exception as e:
+        await yt_parse.finish(f"解析失败: {e}")
+
+    text = (
+        f"[YouTube 解析]\n"
+        f"标题: {summary['title']}\n"
+        f"频道: {summary['channel']}\n"
+        f"时长: {summary['duration']}\n"
+        f"播放量: {summary['view_count']}\n"
+        f"发布: {summary['upload_date']}\n"
+        f"链接: {summary['webpage_url']}"
+    )
+    msg = MessageSegment.text(text)
+
+    # 优先使用最优封面图（maxres），失败回退到 API 缩略图
+    if summary.get("id"):
+        img_b64 = await thumbnail_b64_best(summary["id"])
+        if not img_b64 and summary.get("thumbnail"):
+            img_b64 = await download_image_b64(summary["thumbnail"])
+        if img_b64:
+            msg += MessageSegment.image(img_b64)
+
+    await yt_parse.finish(msg)
+
+
+# ---------- 链接下载（视频 + 封面图） ----------
+
+
+@yt_dl.handle()
+async def handle_dl(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
+    url = _extract_youtube_url(event, args)
+    if not url:
+        await yt_dl.finish(
+            "未找到YouTube链接。可直接发送链接，或回复/引用一条含链接的消息。\n"
+            "示例：YT下载 https://www.youtube.com/watch?v=xxxxxxxxxxx"
+        )
+
+    if not _is_youtube_url(url):
+        await yt_dl.finish("链接似乎不是YouTube链接，请检查后重试")
+
+    try:
+        _require_yt_dlp()
+    except RuntimeError as e:
+        await yt_dl.finish(str(e))
+
+    await yt_dl.send("正在解析并下载（最高画质，视频+音频合并；封面取最优），请稍候...")
+
+    try:
+        result = await download_youtube(url)
+    except Exception as e:
+        await yt_dl.finish(f"下载失败: {e}")
+
+    summary = result["summary"]
+    video_path = result.get("video_path")
+    thumb_path = result.get("thumb_path")
+    output_dir = result.get("output_dir")
+
+    # 构造合并转发节点：封面图节点（含元信息） + 视频节点
+    info_text = (
+        f"[YouTube 下载完成]\n"
+        f"标题: {summary['title']}\n"
+        f"频道: {summary['channel']}\n"
+        f"时长: {summary['duration']}\n"
+        f"保存目录: {output_dir}"
+    )
+    cover_node = MessageSegment.text(info_text)
+    if thumb_path:
+        cover_node += MessageSegment.image(thumb_path)
+
+    nodes = [cover_node]
+    if video_path:
+        nodes.append(MessageSegment.video(video_path))
+    else:
+        nodes.append(MessageSegment.text("未找到已下载的视频文件，请检查下载目录"))
+
+    # 以合并转发形式返回（封面图 + 视频）
+    try:
+        await _send_forward_msg(bot, event, nodes)
+    except Exception as e:
+        logger.error(f"合并转发发送失败: {e}，回退为逐条发送")
+        await yt_dl.send(cover_node)
+        if video_path:
+            try:
+                await yt_dl.send(MessageSegment.video(video_path))
+            except Exception as ve:
+                await yt_dl.send(
+                    f"视频文件已保存到本地: {video_path}\n"
+                    f"（通过QQ发送失败：{ve}）"
+                )
+        else:
+            await yt_dl.send(f"视频文件未生成，保存目录: {output_dir}")

@@ -30,3 +30,6 @@ data/
 .env
 .env.*
 !.env.example
+
+# WorkBuddy local data (memories/configs — not for repo)
+.workbuddy/

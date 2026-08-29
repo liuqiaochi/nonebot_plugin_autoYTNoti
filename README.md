@@ -33,6 +33,54 @@ pip install git+https://github.com/liuqiaochi/nonebot_plugin_autoYTNoti.git
 plugins = ["nonebot_plugin_autoYTNoti"]
 ```
 
+## 🔧 前置依赖（必装）
+
+> ⚠️ **使用 `YT解析` / `YT下载` 指令前，必须确保以下两个组件已安装，否则指令无法正常工作。**
+
+### 1. yt-dlp（Python 包）
+
+`YT解析` / `YT下载` 依赖 `yt-dlp` 解析与下载 YouTube 内容：
+
+```bash
+pip install yt-dlp
+```
+
+- 若已通过 `pip install git+https://...` 安装本插件，`yt-dlp` 通常会作为依赖自动安装；
+- **若指令仍提示未安装**，请手动执行上面的命令；
+- 未安装时，`YT解析` / `YT下载` 会直接提示：`请先安装 yt-dlp：pip install yt-dlp`。
+
+### 2. ffmpeg（系统二进制，最高画质合并必需）
+
+视频默认格式为 `bestvideo+bestaudio/best`，即分别下载**最高画质视频流**与**最高音质音频流**，必须由 `ffmpeg` 合并输出为 mp4。
+
+> ❗ **缺少 ffmpeg 将无法生成完整视频文件**（仅能下载到分离的音视频流）。
+
+各系统安装方式：
+
+- **Debian / Ubuntu**
+  ```bash
+  sudo apt-get update && sudo apt-get install -y ffmpeg
+  ```
+- **CentOS / RHEL**
+  ```bash
+  sudo yum install -y ffmpeg
+  # 若默认源无 ffmpeg，需先启用 RPM Fusion 源
+  ```
+- **macOS（Homebrew）**
+  ```bash
+  brew install ffmpeg
+  ```
+- **Windows**
+  从 [ffmpeg.org](https://ffmpeg.org/download.html) 下载并加入系统 `PATH`，或在 `.env` 中通过 `YT_DL_FFMPEG` 指定绝对路径。
+
+安装后验证：
+
+```bash
+ffmpeg -version
+```
+
+若 `ffmpeg` 不在系统 `PATH` 中，请通过 `YT_DL_FFMPEG=/path/to/ffmpeg` 配置其绝对路径（见下方配置项）。
+
 ## ⚙️ 配置
 
 在 `.env` 文件中添加以下配置项：
@@ -43,6 +91,9 @@ plugins = ["nonebot_plugin_autoYTNoti"]
 | `YT_POLL_INTERVAL` | 否 | `300` | 轮询间隔（秒），默认 5 分钟 |
 | `YT_DATA_PATH` | 否 | `data/yt_noti/data.json` | 数据文件路径 |
 | `YT_PROXY` | 否 | `""` | HTTP 代理地址（国内服务器必填） |
+| `YT_DL_DIR` | 否 | `data/yt_downloads` | yt-dlp 下载目录（相对于 bot 根目录） |
+| `YT_DL_FORMAT` | 否 | `bestvideo+bestaudio/best` | yt-dlp 视频格式选择器（默认最高画质，ffmpeg 合并为 mp4） |
+| `YT_DL_FFMPEG` | 否 | `""` | ffmpeg 可执行文件绝对路径，留空则使用系统 PATH 中的 ffmpeg |
 
 ### 获取 YouTube API Key
 
@@ -94,6 +145,10 @@ YT_PROXY=http://127.0.0.1:7890
 |------|------|
 | `YT列表` | 查看当前全部配置（合并转发） |
 | `YT测试 [handle]` | 测试推送有效性，获取频道最新视频发送给推送用户 |
+| `YT解析 <链接>` | 解析 YouTube 链接，返回标题/频道/时长/播放量/发布日期与封面图（不下载） |
+| `YT下载 <链接>` | 使用 yt-dlp 下载视频（最高画质，ffmpeg 合并）与最优封面图，以合并转发形式回传 |
+
+> 以上两条指令支持**直接发送链接**，也支持**回复 / 引用**一条含链接的消息来触发（无需在指令后手动贴链接）。
 | `YT帮助` | 以图片展示帮助信息 |
 
 ## 🔧 工作原理
@@ -106,7 +161,33 @@ YT_PROXY=http://127.0.0.1:7890
 6. 封面图通过代理下载后以 base64 格式发送，无需协议端访问外网
 7. 将符合配置类型的新视频封面和链接推送给目标用户
 
+### 按需解析与下载（yt-dlp）
+
+- `YT解析 <链接>`：调用 yt-dlp 解析任意 YouTube 链接（watch / youtu.be / shorts 等），返回标题、频道、时长、播放量、发布日期及**最优封面图**，**不下载文件**。
+- `YT下载 <链接>`：调用 yt-dlp 将视频与封面图下载到 `YT_DL_DIR` 目录。
+  - **视频**：默认 `bestvideo+bestaudio/best`（最高画质），由 ffmpeg 合并最高画质视频流与最高音质音频流为 mp4。
+  - **封面图**：优先取 YouTube `maxresdefault`（最高清），缺失时回退 `hqdefault`。
+  - 结果以**合并转发**形式回传：封面图节点（含元信息）+ 视频节点；发送失败会自动回退为逐条发送并提示本地路径。
+- 支持**直接发送链接**，也支持**回复 / 引用**一条含链接的消息触发指令。
+- 视频格式由 `YT_DL_FORMAT` 控制，合并依赖 `ffmpeg`（需位于 PATH，或用 `YT_DL_FFMPEG` 指定绝对路径）；下载/解析/封面均复用 `YT_PROXY` 代理。
+- 前置依赖 `yt-dlp` 与 `ffmpeg` 的安装方式，详见上方「🔧 前置依赖（必装）」小节。
+
 ## 📝 更新日志
+
+### v0.1.3
+
+- 下载默认最高画质：`bestvideo+bestaudio/best`，由 ffmpeg 合并最高画质视频流与最高音质音频流为 mp4
+- 封面图改为取 YouTube 最优（`maxresdefault`，缺失回退 `hqdefault`）
+- 新增 `YT_DL_FFMPEG` 配置项，可指定 ffmpeg 绝对路径
+- `YT解析` / `YT下载` 兼容「回复 / 引用」含链接的消息触发，无需手动贴链接
+- `YT下载` 结果以合并转发形式返回（封面图 + 视频），发送失败时自动回退逐条发送
+
+### v0.1.2
+
+- 新增 `YT解析 <链接>`：基于 yt-dlp 解析 YouTube 链接，返回元信息与封面图（不下载）
+- 新增 `YT下载 <链接>`：基于 yt-dlp 下载视频与封面图到本地并回传
+- 新增配置项 `YT_DL_DIR`（下载目录）与 `YT_DL_FORMAT`（视频格式选择器）
+- 解析/下载复用 `YT_PROXY` 代理；新增 `yt-dlp` pip 依赖
 
 ### v0.1.1
 
