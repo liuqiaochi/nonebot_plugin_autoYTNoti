@@ -20,11 +20,13 @@
 
 import asyncio
 import base64
+import functools
 import re
 from pathlib import Path
 from typing import Dict, Optional
 
 import httpx
+from nonebot import logger
 
 from . import plugin_config
 
@@ -128,6 +130,65 @@ def _player_clients() -> list:
     return [c.strip() for c in raw.split(",") if c.strip()]
 
 
+async def _extract_with_retry(yt_dlp, url: str, extra: Dict, download: bool) -> Dict:
+    """
+    带自愈能力的 yt-dlp 提取。
+
+    尝试顺序：
+      ① 常规尝试一次（使用 YT_DL_PLAYER_CLIENTS 配置的完整客户端列表 + 启用缓存）
+      ② 若失败，禁用 yt-dlp 缓存（cachedir=False）后重试：
+         - 免 cookie 模式：按客户端逐个重试（仅指定单个客户端）
+         - cookie 模式：仅禁用缓存重试一次（保持默认客户端 + 登录态）
+
+    背景：YouTube 的风控具有间歇性，常见报错如
+    "The page needs to be reloaded." / "Sign in to confirm you're not a bot"，
+    常由缓存中的 visitor data、PO Token 或播放器 JS 过期引起（yt-dlp 官方
+    排障建议即 `yt-dlp --rm-cache-dir`）。这里用 cachedir=False 达成同样效果
+    且无需删除磁盘文件，配合换客户端可显著提高成功率，免去人工介入。
+    """
+    loop = asyncio.get_running_loop()
+
+    def _attempt(**override):
+        _extra = dict(extra)
+        _extra.update(override)
+        with yt_dlp.YoutubeDL(_ydl_opts(_extra)) as ydl:
+            return ydl.extract_info(url, download=download)
+
+    # 免 cookie 模式才做客户端轮换；cookie 模式下保持默认客户端以拿到最高画质
+    use_cookies = bool(
+        getattr(plugin_config, "yt_dl_cookies", "")
+        or getattr(plugin_config, "yt_dl_cookies_browser", "")
+    )
+    clients = [] if use_cookies else _player_clients()
+
+    if clients:
+        retries = [
+            {"cachedir": False, "extractor_args": {"youtube": {"player_client": [c]}}}
+            for c in clients
+        ]
+    else:
+        retries = [{"cachedir": False}]
+
+    last_err: Optional[Exception] = None
+    try:
+        return await loop.run_in_executor(None, _attempt)
+    except Exception as e:
+        last_err = e
+        logger.warning(f"yt-dlp 首次尝试失败 [{url}]: {e}")
+
+    for i, override in enumerate(retries, 1):
+        label = override.get("extractor_args", {}).get("youtube", {}).get("player_client")
+        label = label[0] if label else "默认客户端"
+        try:
+            logger.info(f"yt-dlp 重试 {i}/{len(retries)}（客户端 {label}，禁用缓存）: {url}")
+            return await loop.run_in_executor(None, functools.partial(_attempt, **override))
+        except Exception as e:
+            last_err = e
+            logger.warning(f"yt-dlp 重试 {i}（客户端 {label}）失败: {e}")
+
+    raise last_err
+
+
 def _format_duration(seconds) -> str:
     """秒数格式化为 m:ss 或 h:mm:ss"""
     try:
@@ -227,13 +288,7 @@ async def parse_youtube(url: str) -> Dict:
         }
     """
     yt_dlp = _require_yt_dlp()
-
-    def _run():
-        opts = _ydl_opts({"skip_download": True})
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            return ydl.extract_info(url, download=False)
-
-    info = await asyncio.get_running_loop().run_in_executor(None, _run)
+    info = await _extract_with_retry(yt_dlp, url, {"skip_download": True}, download=False)
     return _summarize(info)
 
 
@@ -263,18 +318,13 @@ async def download_youtube(
     out_dir = Path(output_dir or plugin_config.yt_dl_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    def _run():
-        opts = _ydl_opts({
-            "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
-            "format": plugin_config.yt_dl_format,
-            # 封面图由本模块自行下载最优版本（maxres），无需 yt-dlp 写入
-            "writethumbnail": False,
-            "continuedl": True,
-        })
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            return ydl.extract_info(url, download=True)
-
-    info = await asyncio.get_running_loop().run_in_executor(None, _run)
+    info = await _extract_with_retry(yt_dlp, url, {
+        "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
+        "format": plugin_config.yt_dl_format,
+        # 封面图由本模块自行下载最优版本（maxres），无需 yt-dlp 写入
+        "writethumbnail": False,
+        "continuedl": True,
+    }, download=True)
     summary = _summarize(info)
     video_id = info.get("id")
 

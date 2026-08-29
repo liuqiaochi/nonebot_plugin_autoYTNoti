@@ -177,9 +177,23 @@ YT_PROXY=http://127.0.0.1:7890
 - 视频格式由 `YT_DL_FORMAT` 控制，合并依赖 `ffmpeg`（需位于 PATH，或用 `YT_DL_FFMPEG` 指定绝对路径）；下载/解析/封面均复用 `YT_PROXY` 代理。
 - **默认免 cookie**：轮换使用 `tv` / `tv_downgraded` / `web_embedded` / `mweb` 等播放器客户端（由 `YT_DL_PLAYER_CLIENTS` 配置），绕过 `Sign in to confirm you're not a bot` 检测，无需任何登录态即可下载（画质上限约 1080p）。前置依赖 `yt-dlp` 与 `ffmpeg` 的安装方式，详见上方「🔧 前置依赖（必装）」小节。
 
-#### 排障：又出现「Sign in to confirm you're not a bot」
+#### 内置自愈重试
 
-YouTube 会持续调整风控，且**重点封禁机房/数据中心 IP**。若此错误复现，按以下顺序排查：
+`YT解析` / `YT下载` 失败时会自动重试，无需人工清缓存：
+
+1. 先用 `YT_DL_PLAYER_CLIENTS` 的完整客户端列表尝试一次
+2. 失败后**禁用 yt-dlp 缓存**（等价于 `yt-dlp --rm-cache-dir`，但不删磁盘文件），再按客户端**逐个**重试
+3. 全部失败才返回错误（返回最后一个错误信息）
+
+重试过程会写入 bot 日志（含每次使用的客户端），便于定位是哪个客户端被封。
+
+#### 排障：出现「Sign in to confirm you're not a bot」或「The page needs to be reloaded」
+
+YouTube 会持续调整风控，且**重点封禁机房/数据中心 IP**。若此类错误复现，按以下顺序排查：
+
+> 两个错误的区别：前者是**未通过 bot 检测**（客户端选择/登录态问题）；后者是**通过了检测但播放器返回空格式**（多为 yt-dlp 版本过旧或缓存过期，参见 yt-dlp issue #16212——2026.03.03 强制的 `player_js_version` 被 YouTube 拒绝，已于 2026.03.17 修复）。**两者最常见的原因都是 yt-dlp 版本过旧。**
+
+按以下顺序排查：
 
 1. **升级 yt-dlp（最常见原因）**——YouTube 改版后旧版必然失效：
    ```bash
@@ -221,7 +235,8 @@ YouTube 会持续调整风控，且**重点封禁机房/数据中心 IP**。若�
 - **修复免 cookie 失效（关键 bug）**：`extractor_args` 的 `player_client` 之前误用逗号分隔字符串，而 yt-dlp 的 Python API 不会像 CLI 那样按逗号拆分，导致值被逐字符拆成 `['w','e','b','_',...]`，所有客户端名无效被跳过，静默回退默认 `web` 客户端 → 仍报 `Sign in to confirm you're not a bot`。现已改为列表注入
 - 新增 `YT_DL_PLAYER_CLIENTS` 配置项（逗号分隔，默认 `tv,tv_downgraded,web_embedded,mweb`），客户端轮换可在 `.env` 调整，YouTube 策略变化无需改代码
 - 新增 _player_clients() 并补充回归自测：校验注入为 list、经 yt-dlp 自身解析后客户端名完整有效、并复现旧写法的失败路径
-- README 新增「排障：又出现 Sign in to confirm you're not a bot」小节（升级 yt-dlp / 清缓存 / 轮换客户端 / PO Token / cookies 兜底）
+- **新增内置自愈重试**：解析/下载失败后自动禁用 yt-dlp 缓存（`cachedir=False`，等价 `--rm-cache-dir` 但不删磁盘文件）并按客户端逐个重试，全部失败才返回最后错误；重试过程写入 bot 日志。免 cookie 模式按客户端轮换重试，cookie 模式仅无缓存重试一次以保持最高画质
+- README 排障小节扩充：新增「The page needs to be reloaded」错误的定位（多为 yt-dlp 版本过旧，参考 issue #16212）与两个错误的区别说明
 
 ### v0.1.4
 
