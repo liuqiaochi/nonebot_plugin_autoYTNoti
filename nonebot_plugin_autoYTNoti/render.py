@@ -50,12 +50,6 @@ def _get_font(size: int = 20) -> ImageFont.FreeTypeFont:
     return font
 
 
-def _hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
-    """将hex颜色转为RGB元组"""
-    hex_color = hex_color.lstrip("#")
-    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))  # type: ignore
-
-
 def _draw_rounded_rect(
     draw: ImageDraw.ImageDraw,
     xy: Tuple[int, int, int, int],

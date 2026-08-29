@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List
 
 from pydantic import BaseModel, Field
 

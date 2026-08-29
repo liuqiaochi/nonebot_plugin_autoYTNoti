@@ -1,7 +1,5 @@
 """指令处理"""
 
-import re
-
 from nonebot import on_command, logger
 from nonebot.adapters.onebot.v11 import (
     Bot,
