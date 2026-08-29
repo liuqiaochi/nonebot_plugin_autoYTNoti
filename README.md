@@ -129,6 +129,8 @@ yt-dlp -v --simulate "https://www.youtube.com/watch?v=xxxxxxxxxxx" 2>&1 | grep "
 | `YT_DL_FORMAT` | 否 | `bestvideo+bestaudio/best` | yt-dlp 视频格式选择器（ffmpeg 合并为 mp4） |
 | `YT_DL_FFMPEG` | 否 | `""` | ffmpeg 可执行文件绝对路径，留空则使用系统 PATH 中的 ffmpeg |
 | `YT_DL_JS_RUNTIME` | 否 | `""` | JS 运行时，格式 `deno` 或 `deno:/绝对路径/deno`。留空则由 yt-dlp 从 PATH 查找 deno；**systemd 服务环境建议显式指定绝对路径** |
+| `YT_DL_COOKIES` | 否 | `""` | YouTube cookies 文件路径（Netscape 格式 cookies.txt）。配置后注入登录态，规避 `Sign in to confirm you're not a bot` 风控并解锁 4K/HDR，见下方「Cookies 登录态」 |
+| `YT_DL_COOKIES_BROWSER` | 否 | `""` | 从本机浏览器读取 cookies（`chrome`/`firefox`/`safari`/`edge`）。仅适合桌面同机运行；与 `YT_DL_COOKIES` 二选一，两者都配置时文件优先 |
 
 ### 获取 YouTube API Key
 
@@ -146,6 +148,24 @@ YT_PROXY=http://127.0.0.1:7890
 ```
 
 > ⚠️ 国内服务器必须配置 `YT_PROXY`，否则无法访问 YouTube API 和图片 CDN。支持 `http://` 和 `socks5://` 格式。
+
+### Cookies 登录态（可选，彻底规避 bot 风控）
+
+默认的 tv 客户端免登录方案**无账号也能用，但 YouTube 的 bot 风控按出口 IP 概率性触发**（尤其走共享/机房代理 IP 时），表现为 `Sign in to confirm you're not a bot` 时好时坏。若你遇到该报错，配置 cookies 即可彻底解决，同时解锁 4K/HDR 最高画质：
+
+```env
+YT_DL_COOKIES=/path/to/cookies.txt
+# 或（bot 与浏览器同机的桌面场景）：
+YT_DL_COOKIES_BROWSER=chrome
+```
+
+导出 cookies.txt（Netscape 格式）：
+
+1. 在浏览器登录 YouTube（**建议用小号**，账号有被风控封禁的极小概率，且 cookies 会随登录设备变化失效，需定期重新导出）
+2. 安装浏览器扩展 [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)（Chrome/Edge）或 [cookies.txt](https://addons.mozilla.org/firefox/addon/cookies-txt/)（Firefox）
+3. 打开 youtube.com，用扩展导出，保存为 `cookies.txt` 放到服务器可读路径
+
+配置后插件自动切回 yt-dlp 默认客户端（tv 客户端不携带登录态），无需其他改动。
 
 ## 🎉 使用
 
@@ -253,6 +273,10 @@ export YT_DLP_POT_PROVIDER_URL=http://127.0.0.1:4416
 ```
 
 ## 📝 更新日志
+
+### v0.1.7
+
+- **恢复 cookies 可选增强**：新增 `YT_DL_COOKIES`（Netscape 格式 cookies.txt 路径）与 `YT_DL_COOKIES_BROWSER`（从本机浏览器读取）配置项。tv 免登录客户端受 YouTube 按 IP 概率性 bot 风控影响（`Sign in to confirm you're not a bot` 时好时坏），配置 cookies 后注入登录态、切回默认客户端，彻底规避风控并解锁 4K/HDR 画质。不配置则保持 v0.1.6 的 tv 免登录行为，完全向后兼容
 
 ### v0.1.6
 

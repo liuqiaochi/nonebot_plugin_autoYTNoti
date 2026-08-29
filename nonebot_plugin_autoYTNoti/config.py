@@ -44,3 +44,14 @@ class Config(BaseModel):
     # 指定路径：systemd 等服务环境的 PATH 常不含 ~/.deno/bin，需显式给绝对路径，例如
     #   deno:/home/laofei/.deno/bin/deno
     yt_dl_js_runtime: str = ""
+
+    # YouTube cookies 文件路径（Netscape 格式 cookies.txt），可选增强
+    # 配置后注入登录态并切回默认客户端：可解锁 4K/HDR 最高画质，
+    # 并彻底规避 "Sign in to confirm you're not a bot" 风控。
+    # 与 yt_dl_cookies_browser 二选一，同时配置时文件优先。
+    # 导出方法见 README「Cookies 登录态（可选）」小节。
+    yt_dl_cookies: str = ""
+
+    # 从本机浏览器读取 cookies（如 chrome/firefox/safari/edge），可选
+    # 仅适合 bot 与浏览器同机的桌面场景；服务器请用 yt_dl_cookies 指向导出的文件。
+    yt_dl_cookies_browser: str = ""

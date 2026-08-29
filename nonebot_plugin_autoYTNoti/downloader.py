@@ -6,8 +6,9 @@
 - thumbnail_b64_best(id):  获取视频最优封面图（maxres）的 base64，用于即时展示
 
 特性：
-- 免 cookie：YouTube 使用 tv 电视客户端（与 FeiTools 同源方案），免登录，
-  画质上限约 1080p
+- 默认免 cookie：YouTube 使用 tv 电视客户端（与 FeiTools 同源方案），免登录，
+  画质上限约 1080p；配置 cookies（YT_DL_COOKIES / YT_DL_COOKIES_BROWSER）后
+  自动注入登录态并切回默认客户端，可解锁 4K/HDR 并规避 bot 风控
 - 视频使用 ffmpeg 合并最佳视频流 + 最佳音频流（mp4）
 - 封面图优先取 YouTube maxresdefault（最高清），失败时回退 hqdefault
 - 解析/下载/封面均复用 config 中的 YT_PROXY 代理配置
@@ -98,10 +99,20 @@ def _ydl_opts(extra: Optional[Dict] = None) -> Dict:
         if name:
             opts["js_runtimes"] = {name: {"path": path} if path else {}}
 
-    # 客户端策略：仅使用 tv 电视客户端（免登录，与 FeiTools 同源方案）。
+    # 客户端策略（免 cookie 模式）：仅使用 tv 电视客户端（免登录，与 FeiTools 同源方案）。
     # 注意：Python API 的 extractor_args 必须传 list，传逗号字符串会被
     # yt-dlp 逐字符拆开导致全部无效，进而静默回退默认 web 客户端触发 bot 检测。
-    opts["extractor_args"] = {"youtube": {"player_client": ["tv"]}}
+    # 配置 cookies 后则不强制 tv 客户端：tv 客户端不携带登录态，
+    # 有登录态时切回默认客户端可解锁 4K/HDR 并规避 bot 风控。
+    cookies_file = (getattr(plugin_config, "yt_dl_cookies", "") or "").strip()
+    cookies_browser = (getattr(plugin_config, "yt_dl_cookies_browser", "") or "").strip()
+    if cookies_file:
+        opts["cookiefile"] = cookies_file
+    if cookies_browser:
+        # Python API 要求 tuple：(browser, profile, keyring, container)
+        opts["cookiesfrombrowser"] = (cookies_browser,)
+    if not (cookies_file or cookies_browser):
+        opts["extractor_args"] = {"youtube": {"player_client": ["tv"]}}
 
     if extra:
         opts.update(extra)
