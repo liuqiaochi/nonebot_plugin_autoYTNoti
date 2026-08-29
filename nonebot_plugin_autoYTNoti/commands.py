@@ -529,8 +529,7 @@ async def handle_dl(bot: Bot, event: MessageEvent, args: Message = CommandArg())
         f"[YouTube 下载完成]\n"
         f"标题: {summary['title']}\n"
         f"频道: {summary['channel']}\n"
-        f"时长: {summary['duration']}\n"
-        f"保存目录: {output_dir}"
+        f"时长: {summary['duration']}"
     )
     cover_node = MessageSegment.text(info_text)
     if thumb_path:
