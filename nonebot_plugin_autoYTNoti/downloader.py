@@ -6,10 +6,8 @@
 - thumbnail_b64_best(id):  获取视频最优封面图（maxres）的 base64，用于即时展示
 
 特性：
-- 默认免 cookie：YouTube 使用 tv/web_embedded 客户端（电视端 API），天然绕过
-  "Sign in to confirm you're not a bot" 检测，画质上限约 1080p
-- 可选增强：在 .env 配置 YT_DL_COOKIES / YT_DL_COOKIES_BROWSER 后，自动切回 web
-  客户端并注入登录态，可获取 4K/HDR 等最高画质
+- 免 cookie：YouTube 使用 tv 电视客户端（与 FeiTools 同源方案），免登录，
+  画质上限约 1080p
 - 视频使用 ffmpeg 合并最佳视频流 + 最佳音频流（mp4）
 - 封面图优先取 YouTube maxresdefault（最高清），失败时回退 hqdefault
 - 解析/下载/封面均复用 config 中的 YT_PROXY 代理配置
@@ -100,24 +98,10 @@ def _ydl_opts(extra: Optional[Dict] = None) -> Dict:
         if name:
             opts["js_runtimes"] = {name: {"path": path} if path else {}}
 
-    # 客户端策略：
-    # - 未配置 cookie：使用 tv/web_embedded 电视客户端，免登录即可绕过 bot 检测，
-    #   画质上限约 1080p（与 FeiTools 的 server 方案一致）
-    # - 已配置 cookie：切回默认 web 客户端并注入登录态，可获取 4K/HDR 等最高画质
-    _ck_file = plugin_config.yt_dl_cookies
-    _ck_browser = plugin_config.yt_dl_cookies_browser
-    if _ck_file or _ck_browser:
-        # 配置了 cookie：用 web 客户端拿最高画质，注入登录态
-        if _ck_file:
-            opts["cookiefile"] = _ck_file
-        else:
-            # cookiesfrombrowser 接受 (browser, profile_key, profile_name, cookie_file) 元组
-            opts["cookiesfrombrowser"] = (_ck_browser,)
-    else:
-        # 默认免 cookie：tv/web_embedded 客户端绕过 "Sign in to confirm you're not a bot"
-        opts["extractor_args"] = {
-            "youtube": {"player_client": "web_embedded,tv"}
-        }
+    # 客户端策略：仅使用 tv 电视客户端（免登录，与 FeiTools 同源方案）。
+    # 注意：Python API 的 extractor_args 必须传 list，传逗号字符串会被
+    # yt-dlp 逐字符拆开导致全部无效，进而静默回退默认 web 客户端触发 bot 检测。
+    opts["extractor_args"] = {"youtube": {"player_client": ["tv"]}}
 
     if extra:
         opts.update(extra)

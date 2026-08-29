@@ -129,8 +129,6 @@ yt-dlp -v --simulate "https://www.youtube.com/watch?v=xxxxxxxxxxx" 2>&1 | grep "
 | `YT_DL_FORMAT` | 否 | `bestvideo+bestaudio/best` | yt-dlp 视频格式选择器（ffmpeg 合并为 mp4） |
 | `YT_DL_FFMPEG` | 否 | `""` | ffmpeg 可执行文件绝对路径，留空则使用系统 PATH 中的 ffmpeg |
 | `YT_DL_JS_RUNTIME` | 否 | `""` | JS 运行时，格式 `deno` 或 `deno:/绝对路径/deno`。留空则由 yt-dlp 从 PATH 查找 deno；**systemd 服务环境建议显式指定绝对路径** |
-| `YT_DL_COOKIES` | 否 | `""` | YouTube cookies 文件（cookies.txt）【可选】。默认免 cookie（tv 客户端，≤1080p）；配置后可切回 web 客户端获取最高画质 |
-| `YT_DL_COOKIES_BROWSER` | 否 | `""` | 从本机已登录浏览器直读 cookies（如 chrome/firefox/safari）【可选】，效果同上 |
 
 ### 获取 YouTube API Key
 
@@ -207,7 +205,7 @@ YT_PROXY=http://127.0.0.1:7890
   - 结果以**两条直发消息**返回：① 封面图 + 元信息 ② 视频。视频**不放入合并转发节点**——转发内的视频会被 QQ 显示为「已过期」（本地文件本身正常）。视频发送失败时提示本地保存路径。
 - 支持**直接发送链接**，也支持**回复 / 引用**一条含链接的消息触发指令。
 - 视频格式由 `YT_DL_FORMAT` 控制，合并依赖 `ffmpeg`（需位于 PATH，或用 `YT_DL_FFMPEG` 指定绝对路径）；下载/解析/封面均复用 `YT_PROXY` 代理。
-- **默认免 cookie**：YouTube 使用 `tv/web_embedded` 电视客户端，天然绕过 `Sign in to confirm you're not a bot` 检测，无需任何登录态即可下载（画质上限约 1080p）。前置依赖 `yt-dlp`、`ffmpeg` 与 `deno` 的安装方式，详见上方「🔧 前置依赖（必装）」小节。
+- **默认免 cookie**：YouTube 使用 `tv` 电视客户端（与 FeiTools 同源方案），免登录下载（画质上限约 1080p）。前置依赖 `yt-dlp`、`ffmpeg` 与 `deno` 的安装方式，详见上方「🔧 前置依赖（必装）」小节。
 
 #### 排障：出现「Sign in to confirm you're not a bot」
 
@@ -239,16 +237,11 @@ yt-dlp --version
 yt-dlp --rm-cache-dir
 ```
 
-**3. 轮换播放器客户端** —— 把 `YT_DL_PLAYER_CLIENTS` 换成其他组合（需 v0.1.5+）：
+**3. 轮换播放器客户端** —— 代码默认仅使用 `tv` 电视客户端（免登录）。若 YouTube 风控策略变化，可临时用命令行验证其他客户端是否可用（可用值：`tv` / `tv_downgraded` / `tv_simply` / `web_embedded` / `mweb` / `web` 等，以安装的 yt-dlp 版本为准；`web` 最易触发检测）：
 
-```env
-YT_DL_PLAYER_CLIENTS=visionos,tv,tv_downgraded,web_embedded,mweb
+```bash
+yt-dlp -v --extractor-args "youtube:player_client=web_embedded" --skip-download "视频链接"
 ```
-
-可用值：`tv` / `tv_downgraded` / `tv_simply` / `web` / `web_safari` / `web_embedded` / `web_music` / `web_creator` / `mweb` / `android` / `android_vr` / `ios` / `visionos`
-（以安装的 yt-dlp 版本为准；`web` 最易触发检测，不要放在前面。）
-
-> ⚠️ 填了无效名称会被 yt-dlp 静默跳过并回退默认客户端，表现就是「明明改了配置却仍报 bot 错误」。
 
 **4. 使用 PO Token 服务（机房 IP 的根本解法）** —— 若服务器 IP 已被标记，换客户端无效。
 `bgutil-ytdlp-pot-provider` 动态生成 Proof-of-Origin 令牌，无需账号/cookie：
@@ -259,17 +252,14 @@ pip install bgutil-ytdlp-pot-provider
 export YT_DLP_POT_PROVIDER_URL=http://127.0.0.1:4416
 ```
 
-**5. 兜底：配置 cookies** —— 见下一小节。cookies 有效期有限，需定期重新导出，故优先级最低。
-
-#### 可选增强：使用 cookies 获取最高画质（4K/HDR）
-
-默认 `tv` 客户端的画质上限约 1080p。如需 4K/HDR 等更高规格，可提供已登录 YouTube 账号的 cookies，将自动切回 `web` 客户端：
-
-- **方式一（推荐，服务器通用）**：在本地已登录 YouTube 的浏览器中用扩展（如「Get cookies.txt」/「cookie-editor」）导出 `cookies.txt`，上传到服务器，配置 `YT_DL_COOKIES=/path/cookies.txt`。
-- **方式二（需服务器装有浏览器）**：配置 `YT_DL_COOKIES_BROWSER=chrome`（可选 `chrome` / `chromium` / `firefox` / `safari` / `edge` 等），由 yt-dlp 直接从本机已登录浏览器读取 cookies。
-- 两者二选一（优先 cookies 文件）；解析与下载均会复用该登录态。cookies 过期后需重新导出。
-
 ## 📝 更新日志
+
+### v0.1.6
+
+- **修复 tv 客户端从未真正生效的 bug**：Python API 的 `extractor_args.player_client` 此前传的是逗号字符串，被 yt-dlp 逐字符拆开判定全部无效，**静默回退默认客户端（visionos/web）**，这是 bot 持续报 bot 检测错误的直接原因。现改为列表并锁定为 `["tv"]`（与 FeiTools 同源方案）
+- **移除 cookies 相关配置**（`YT_DL_COOKIES` / `YT_DL_COOKIES_BROWSER`）及全部 cookie 注入逻辑，统一走 tv 免登录客户端
+- 新增每天 0 点定时清理 `YT_DL_DIR` 中的历史封面与视频文件
+- `YT下载` 完成消息不再显示保存目录
 
 ### v0.1.5
 
