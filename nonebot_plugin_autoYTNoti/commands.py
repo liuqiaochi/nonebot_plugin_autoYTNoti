@@ -426,7 +426,7 @@ HELP_TEXT = """\
 
 [按需解析/下载]
   YT解析 <链接>        解析链接,返回标题/频道/时长/播放量/封面
-  YT下载 <链接>        下载视频与封面图(合并转发返回)
+  YT下载 <链接>        下载视频与封面图(两条消息直发:封面+视频)
     链接支持直接发送,也可回复/引用含链接的消息
     默认免cookie(≤1080p),配YT_DL_COOKIES可获最高画质
 
@@ -526,7 +526,7 @@ async def handle_dl(bot: Bot, event: MessageEvent, args: Message = CommandArg())
     thumb_path = result.get("thumb_path")
     output_dir = result.get("output_dir")
 
-    # 构造合并转发节点：封面图节点（含元信息） + 视频节点
+    # 以两条直发消息返回（不使用合并转发）：① 封面图 + 元信息 ② 视频
     info_text = (
         f"[YouTube 下载完成]\n"
         f"标题: {summary['title']}\n"
@@ -537,26 +537,17 @@ async def handle_dl(bot: Bot, event: MessageEvent, args: Message = CommandArg())
     cover_node = MessageSegment.text(info_text)
     if thumb_path:
         cover_node += MessageSegment.image(thumb_path)
+    await yt_dl.send(cover_node)
 
-    nodes = [cover_node]
+    # 视频单独直发：放进合并转发节点会被 QQ 显示为「已过期」
     if video_path:
-        nodes.append(MessageSegment.video(video_path))
+        try:
+            await yt_dl.send(MessageSegment.video(video_path))
+        except Exception as ve:
+            logger.error(f"发送视频文件失败 {video_path}: {ve}")
+            await yt_dl.send(
+                f"视频文件已保存到本地: {video_path}\n"
+                f"（通过QQ发送失败：{ve}）"
+            )
     else:
-        nodes.append(MessageSegment.text("未找到已下载的视频文件，请检查下载目录"))
-
-    # 以合并转发形式返回（封面图 + 视频）
-    try:
-        await _send_forward_msg(bot, event, nodes)
-    except Exception as e:
-        logger.error(f"合并转发发送失败: {e}，回退为逐条发送")
-        await yt_dl.send(cover_node)
-        if video_path:
-            try:
-                await yt_dl.send(MessageSegment.video(video_path))
-            except Exception as ve:
-                await yt_dl.send(
-                    f"视频文件已保存到本地: {video_path}\n"
-                    f"（通过QQ发送失败：{ve}）"
-                )
-        else:
-            await yt_dl.send(f"视频文件未生成，保存目录: {output_dir}")
+        await yt_dl.send(f"视频文件未生成，保存目录: {output_dir}")
