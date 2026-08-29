@@ -94,8 +94,7 @@ ffmpeg -version
 | `YT_DL_DIR` | 否 | `data/yt_downloads` | yt-dlp 下载目录（相对于 bot 根目录） |
 | `YT_DL_FORMAT` | 否 | `bestvideo+bestaudio/best` | yt-dlp 视频格式选择器（ffmpeg 合并为 mp4） |
 | `YT_DL_FFMPEG` | 否 | `""` | ffmpeg 可执行文件绝对路径，留空则使用系统 PATH 中的 ffmpeg |
-| `YT_DL_PLAYER_CLIENTS` | 否 | `tv,tv_downgraded,web_embedded,mweb` | 免 cookie 使用的 YouTube 播放器客户端轮换列表（逗号分隔，按优先级）。YouTube 策略变化时改此项即可，详见下方「排障」 |
-| `YT_DL_COOKIES` | 否 | `""` | YouTube cookies 文件（cookies.txt）【可选】。默认免 cookie（轮换客户端，≤1080p）；配置后可切回 web 客户端获取最高画质 |
+| `YT_DL_COOKIES` | 否 | `""` | YouTube cookies 文件（cookies.txt）【可选】。默认免 cookie（tv 客户端，≤1080p）；配置后可切回 web 客户端获取最高画质 |
 | `YT_DL_COOKIES_BROWSER` | 否 | `""` | 从本机已登录浏览器直读 cookies（如 chrome/firefox/safari）【可选】，效果同上 |
 
 ### 获取 YouTube API Key
@@ -149,10 +148,9 @@ YT_PROXY=http://127.0.0.1:7890
 | `YT列表` | 查看当前全部配置（合并转发） |
 | `YT测试 [handle]` | 测试推送有效性，获取频道最新视频发送给推送用户 |
 | `YT解析 <链接>` | 解析 YouTube 链接，返回标题/频道/时长/播放量/发布日期与封面图（不下载） |
-| `YT下载 <链接>` | 使用 yt-dlp 下载视频（ffmpeg 合并为 mp4）与最优封面图；以两条直发消息返回：① 封面图+元信息 ② 视频（避免转发内视频显示「已过期」） |
+| `YT下载 <链接>` | 使用 yt-dlp 下载视频（ffmpeg 合并为 mp4）与最优封面图，以合并转发形式回传 |
 
 > 以上两条指令支持**直接发送链接**，也支持**回复 / 引用**一条含链接的消息来触发（无需在指令后手动贴链接）。
-
 | `YT帮助` | 以图片展示帮助信息 |
 
 ## 🔧 工作原理
@@ -169,56 +167,12 @@ YT_PROXY=http://127.0.0.1:7890
 
 - `YT解析 <链接>`：调用 yt-dlp 解析任意 YouTube 链接（watch / youtu.be / shorts 等），返回标题、频道、时长、播放量、发布日期及**最优封面图**，**不下载文件**。
 - `YT下载 <链接>`：调用 yt-dlp 将视频与封面图下载到 `YT_DL_DIR` 目录。
-  - **视频**：默认 `bestvideo+bestaudio/best`，由 ffmpeg 合并最佳视频流与最佳音频流为 mp4。默认轮换 tv 系客户端，**画质上限约 1080p**（免 cookie，开箱即用）。
+  - **视频**：默认 `bestvideo+bestaudio/best`，由 ffmpeg 合并最佳视频流与最佳音频流为 mp4。默认走 tv 客户端，**画质上限约 1080p**（免 cookie，开箱即用）。
   - **封面图**：优先取 YouTube `maxresdefault`（最高清），缺失时回退 `hqdefault`。
-  - 以**两条直发消息**返回：① 封面图 + 元信息 ② 视频（不放入转发节点，避免 go-cqhttp 转发内视频显示「已过期」）。视频直发失败时会提示本地保存路径。
-  - **自动清理**：视频成功发送后，本地的视频文件与封面文件会自动删除，避免长期占用磁盘；若发送失败则保留文件以便从保存目录找回。
+  - 结果以**合并转发**形式回传：封面图节点（含元信息）+ 视频节点；发送失败会自动回退为逐条发送并提示本地路径。
 - 支持**直接发送链接**，也支持**回复 / 引用**一条含链接的消息触发指令。
 - 视频格式由 `YT_DL_FORMAT` 控制，合并依赖 `ffmpeg`（需位于 PATH，或用 `YT_DL_FFMPEG` 指定绝对路径）；下载/解析/封面均复用 `YT_PROXY` 代理。
-- **默认免 cookie**：轮换使用 `tv` / `tv_downgraded` / `web_embedded` / `mweb` 等播放器客户端（由 `YT_DL_PLAYER_CLIENTS` 配置），绕过 `Sign in to confirm you're not a bot` 检测，无需任何登录态即可下载（画质上限约 1080p）。前置依赖 `yt-dlp` 与 `ffmpeg` 的安装方式，详见上方「🔧 前置依赖（必装）」小节。
-
-#### 内置自愈重试
-
-`YT解析` / `YT下载` 失败时会自动重试，无需人工清缓存：
-
-1. 先用 `YT_DL_PLAYER_CLIENTS` 的完整客户端列表尝试一次
-2. 失败后**禁用 yt-dlp 缓存**（等价于 `yt-dlp --rm-cache-dir`，但不删磁盘文件），再按客户端**逐个**重试
-3. 全部失败才返回错误（返回最后一个错误信息）
-
-重试过程会写入 bot 日志（含每次使用的客户端），便于定位是哪个客户端被封。
-
-#### 排障：出现「Sign in to confirm you're not a bot」或「The page needs to be reloaded」
-
-YouTube 会持续调整风控，且**重点封禁机房/数据中心 IP**。若此类错误复现，按以下顺序排查：
-
-> 两个错误的区别：前者是**未通过 bot 检测**（客户端选择/登录态问题）；后者是**通过了检测但播放器返回空格式**（多为 yt-dlp 版本过旧或缓存过期，参见 yt-dlp issue #16212——2026.03.03 强制的 `player_js_version` 被 YouTube 拒绝，已于 2026.03.17 修复）。**两者最常见的原因都是 yt-dlp 版本过旧。**
-
-按以下顺序排查：
-
-1. **升级 yt-dlp（最常见原因）**——YouTube 改版后旧版必然失效：
-   ```bash
-   pip install -U yt-dlp
-   yt-dlp --version
-   ```
-2. **清理 yt-dlp 缓存**——风控挑战的求解结果会过期，导致原本可用的请求开始失败：
-   ```bash
-   yt-dlp --rm-cache-dir
-   ```
-3. **轮换播放器客户端**——把 `YT_DL_PLAYER_CLIENTS` 换成其他组合，重启 bot 重试：
-   ```env
-   # 依次尝试：优先 tv 系 → 嵌入式/移动 web → android_vr
-   YT_DL_PLAYER_CLIENTS=tv_downgraded,tv,web_embedded,mweb,android_vr
-   ```
-   可用值：`tv` / `tv_downgraded` / `tv_simply` / `web` / `web_safari` / `web_embedded` / `web_music` / `web_creator` / `mweb` / `android` / `android_vr` / `ios` / `visionos`
-   （具体以安装的 yt-dlp 版本为准；`web` 与 `visionos` 是默认客户端，最易触发检测，不要放在前面。）
-
-   > ⚠️ 若填了无效名称，yt-dlp 会静默跳过并回退默认 `web` 客户端（本插件日志默认静默），表现就是「明明改了配置却仍报 bot 错误」。请严格按上述可用值填写。
-4. **使用 PO Token 服务（机房 IP 的根本解法）**——若服务器 IP 已被 YouTube 标记，单纯换客户端无效。可部署 `bgutil-ytdlp-pot-provider`（动态生成 Proof-of-Origin 令牌，无需账号/cookie）：
-   ```bash
-   pip install bgutil-ytdlp-pot-provider
-   ```
-   其服务端默认监听 `127.0.0.1:4416`，启动后设置环境变量 `YT_DLP_POT_PROVIDER_URL=http://127.0.0.1:4416` 再重启 bot。
-5. **兜底：配置 cookies**——见下一小节。cookies 有效期有限，需定期重新导出，故优先级最低。
+- **默认免 cookie**：YouTube 使用 `tv/web_embedded` 电视客户端，天然绕过 `Sign in to confirm you're not a bot` 检测，无需任何登录态即可下载（画质上限约 1080p）。前置依赖 `yt-dlp` 与 `ffmpeg` 的安装方式，详见上方「🔧 前置依赖（必装）」小节。
 
 #### 可选增强：使用 cookies 获取最高画质（4K/HDR）
 
@@ -229,14 +183,6 @@ YouTube 会持续调整风控，且**重点封禁机房/数据中心 IP**。若�
 - 两者二选一（优先 cookies 文件）；解析与下载均会复用该登录态。cookies 过期后需重新导出。
 
 ## 📝 更新日志
-
-### v0.1.5
-
-- **修复免 cookie 失效（关键 bug）**：`extractor_args` 的 `player_client` 之前误用逗号分隔字符串，而 yt-dlp 的 Python API 不会像 CLI 那样按逗号拆分，导致值被逐字符拆成 `['w','e','b','_',...]`，所有客户端名无效被跳过，静默回退默认 `web` 客户端 → 仍报 `Sign in to confirm you're not a bot`。现已改为列表注入
-- 新增 `YT_DL_PLAYER_CLIENTS` 配置项（逗号分隔，默认 `tv,tv_downgraded,web_embedded,mweb`），客户端轮换可在 `.env` 调整，YouTube 策略变化无需改代码
-- 新增 _player_clients() 并补充回归自测：校验注入为 list、经 yt-dlp 自身解析后客户端名完整有效、并复现旧写法的失败路径
-- **新增内置自愈重试**：解析/下载失败后自动禁用 yt-dlp 缓存（`cachedir=False`，等价 `--rm-cache-dir` 但不删磁盘文件）并按客户端逐个重试，全部失败才返回最后错误；重试过程写入 bot 日志。免 cookie 模式按客户端轮换重试，cookie 模式仅无缓存重试一次以保持最高画质
-- README 排障小节扩充：新增「The page needs to be reloaded」错误的定位（多为 yt-dlp 版本过旧，参考 issue #16212）与两个错误的区别说明
 
 ### v0.1.4
 
@@ -250,8 +196,7 @@ YouTube 会持续调整风控，且**重点封禁机房/数据中心 IP**。若�
 - 封面图改为取 YouTube 最优（`maxresdefault`，缺失回退 `hqdefault`）
 - 新增 `YT_DL_FFMPEG` 配置项，可指定 ffmpeg 绝对路径
 - `YT解析` / `YT下载` 兼容「回复 / 引用」含链接的消息触发，无需手动贴链接
-- `YT下载` 结果以两条直发消息返回：① 封面图+元信息 ② 视频（不放入转发，避免显示「已过期」），发送失败时提示本地路径
-- `YT下载` 视频发送成功后自动删除本地视频与封面文件（发送失败则保留）
+- `YT下载` 结果以合并转发形式返回（封面图 + 视频），发送失败时自动回退逐条发送
 
 ### v0.1.2
 
