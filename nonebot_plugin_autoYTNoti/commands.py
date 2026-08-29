@@ -2,7 +2,7 @@
 
 import re
 
-from nonebot import on_command, logger, get_driver
+from nonebot import on_command, logger
 from nonebot.adapters.onebot.v11 import (
     Bot,
     GroupMessageEvent,
@@ -37,15 +37,6 @@ def _cmd(name: str, **kwargs):
     for prefix in ("yt", "Yt", "yT"):
         aliases.add(f"{prefix}{suffix}")
     return on_command(name, aliases=aliases, **kwargs)
-
-
-def _is_superuser(event: MessageEvent) -> bool:
-    """显式校验事件发送者是否为配置的超级用户（与装饰器 permission=SUPERUSER 双重保险）"""
-    try:
-        sus = get_driver().config.superusers
-    except Exception:
-        return False
-    return str(event.get_user_id()) in {str(u) for u in sus}
 
 
 def _extract_youtube_url(event, args: Message) -> str:
@@ -459,8 +450,6 @@ async def handle_help(bot: Bot, event: MessageEvent):
 
 @yt_parse.handle()
 async def handle_parse(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
-    if not _is_superuser(event):
-        await yt_parse.finish("此功能（YT解析 / YT下载）仅超级用户可用")
     url = _extract_youtube_url(event, args)
     if not url:
         await yt_parse.finish(
@@ -510,8 +499,6 @@ async def handle_parse(bot: Bot, event: MessageEvent, args: Message = CommandArg
 
 @yt_dl.handle()
 async def handle_dl(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
-    if not _is_superuser(event):
-        await yt_dl.finish("此功能（YT解析 / YT下载）仅超级用户可用")
     url = _extract_youtube_url(event, args)
     if not url:
         await yt_dl.finish(
