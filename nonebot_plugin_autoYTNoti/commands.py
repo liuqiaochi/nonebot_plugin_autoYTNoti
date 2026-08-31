@@ -14,6 +14,7 @@ from nonebot.permission import SUPERUSER
 
 from .models import ChannelData, load_data, save_data
 from .render import text_to_image_b64
+from . import plugin_config
 from .youtube import resolve_channel_id, fetch_latest_video_ids, get_video_details, download_image_b64
 from .downloader import (
     parse_youtube,
@@ -426,7 +427,8 @@ HELP_TEXT = """\
   YT解析 <链接>        解析链接,返回标题/频道/时长/播放量/封面
   YT下载 <链接>        下载视频与封面图(两条消息直发:封面+视频)
     链接支持直接发送,也可回复/引用含链接的消息
-    走tv客户端免cookie(画质上限约1080p)
+    解析/下载默认在机器人本机进行;若配置了 yt_remote_server
+    则改为调用远端下载服务(如 Mac 上的 app.py),本机无需 yt-dlp
 
 * 指令不区分大小写 (YT/yt/Yt 均可)
 * 推送添加/删除支持直接@用户
@@ -458,10 +460,12 @@ async def handle_parse(bot: Bot, event: MessageEvent, args: Message = CommandArg
     if not _is_youtube_url(url):
         await yt_parse.finish("链接似乎不是YouTube链接，请检查后重试")
 
-    try:
-        _require_yt_dlp()
-    except RuntimeError as e:
-        await yt_parse.finish(str(e))
+    # 远程模式（配置了 yt_remote_server）下本机无需 yt-dlp
+    if not plugin_config.yt_remote_server:
+        try:
+            _require_yt_dlp()
+        except RuntimeError as e:
+            await yt_parse.finish(str(e))
 
     await yt_parse.send("正在解析链接...")
 
@@ -507,10 +511,12 @@ async def handle_dl(bot: Bot, event: MessageEvent, args: Message = CommandArg())
     if not _is_youtube_url(url):
         await yt_dl.finish("链接似乎不是YouTube链接，请检查后重试")
 
-    try:
-        _require_yt_dlp()
-    except RuntimeError as e:
-        await yt_dl.finish(str(e))
+    # 远程模式（配置了 yt_remote_server）下本机无需 yt-dlp
+    if not plugin_config.yt_remote_server:
+        try:
+            _require_yt_dlp()
+        except RuntimeError as e:
+            await yt_dl.finish(str(e))
 
     await yt_dl.send("正在解析并下载（最高画质，视频+音频合并；封面取最优），请稍候...")
 
@@ -542,9 +548,6 @@ async def handle_dl(bot: Bot, event: MessageEvent, args: Message = CommandArg())
             await yt_dl.send(MessageSegment.video(video_path))
         except Exception as ve:
             logger.error(f"发送视频文件失败 {video_path}: {ve}")
-            await yt_dl.send(
-                f"视频文件已保存到本地: {video_path}\n"
-                f"（通过QQ发送失败：{ve}）"
-            )
+            await yt_dl.send(f"视频发送失败: {ve}")
     else:
         await yt_dl.send(f"视频文件未生成，保存目录: {output_dir}")

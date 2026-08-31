@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import httpx
+from nonebot import logger
 
 from . import plugin_config
 
@@ -217,6 +218,10 @@ async def parse_youtube(url: str) -> Dict:
             "upload_date", "webpage_url", "thumbnail", "description"
         }
     """
+    # 远程模式：解析交给 Mac 的 app.py，本机无需 yt-dlp
+    if plugin_config.yt_remote_server:
+        return await remote_parse_youtube(url)
+
     yt_dlp = _require_yt_dlp()
 
     def _run():
@@ -232,6 +237,7 @@ async def download_youtube(
     url: str,
     output_dir: Optional[Path] = None,
     with_thumbnail: bool = True,
+    mode: str = "best",
 ) -> Dict:
     """
     下载 YouTube 视频（最高画质，ffmpeg 合并为 mp4）与最优封面图到本地目录。
@@ -240,6 +246,7 @@ async def download_youtube(
         url: YouTube 链接
         output_dir: 保存目录，默认取 plugin_config.yt_dl_dir
         with_thumbnail: 是否同时下载封面图
+        mode: 下载画质模式（仅远程模式生效），见 app.py 的 mode 取值
 
     Returns:
         {
@@ -249,6 +256,12 @@ async def download_youtube(
             "output_dir": str,      # 实际保存目录
         }
     """
+    # 远程模式：下载交给 Mac 的 app.py，本机只负责拉回成品文件并发消息
+    if plugin_config.yt_remote_server:
+        return await remote_download_youtube(
+            url, output_dir=output_dir, with_thumbnail=with_thumbnail, mode=mode
+        )
+
     yt_dlp = _require_yt_dlp()
 
     out_dir = Path(output_dir or plugin_config.yt_dl_dir).resolve()
@@ -287,6 +300,158 @@ async def download_youtube(
         if data:
             thumb_path = str(out_dir / f"{video_id}.jpg")
             Path(thumb_path).write_bytes(data)
+
+    return {
+        "summary": summary,
+        "video_path": video_path,
+        "thumb_path": thumb_path,
+        "output_dir": str(out_dir),
+    }
+
+
+# ========== 远程模式：下载/解析全部卸载到 Mac 的 app.py ==========
+#
+# 数据流（pull 模型）：
+#   1. bot(本机) POST /api/download {url, mode}  -> 拿到 task_id
+#   2. bot 轮询 GET /api/task/<id> 直到 status=done / error（或超时）
+#   3. 完成后从 /downloads/<file> 拉回视频字节、从 thumbnail_url 拉回封面字节
+#   4. bot 把它们存到本机 yt_dl_dir，再像本机模式一样发消息
+# app.py 侧需开启 API_TOKEN 鉴权（可选），并在任务里返回 download_url / thumbnail_url。
+
+
+async def _remote_request(method: str, url: str, *, token: str = "", json_body=None, timeout: float = 60):
+    """带鉴权头的远程请求；失败抛 RuntimeError。"""
+    headers = {"X-Api-Token": token} if token else {}
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        resp = await client.request(method, url, json=json_body, headers=headers)
+    return resp
+
+
+async def _remote_bytes(url: str, token: str = "") -> Optional[bytes]:
+    """下载二进制（视频/封面）并返回字节；失败返回 None。"""
+    headers = {"X-Api-Token": token} if token else {}
+    try:
+        async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                return resp.content
+    except Exception:
+        return None
+    return None
+
+
+async def remote_parse_youtube(url: str) -> Dict:
+    """调用 Mac app.py /api/info 解析元信息。"""
+    server = plugin_config.yt_remote_server.rstrip("/")
+    token = plugin_config.yt_remote_token
+    resp = await _remote_request(
+        "POST", f"{server}/api/info", token=token, json_body={"url": url}, timeout=60
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"远程解析失败: HTTP {resp.status_code} {resp.text[:200]}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"远程解析失败: {data['error']}")
+    return {
+        "id": data.get("id"),
+        "title": data.get("title", "未知标题"),
+        "channel": data.get("uploader", "未知频道"),
+        "duration": _format_duration(data.get("duration")),
+        "view_count": _format_count(data.get("view_count")),
+        "upload_date": _format_date(data.get("upload_date")),
+        "webpage_url": data.get("webpage_url") or url,
+        "thumbnail": data.get("thumbnail", ""),
+        "description": (data.get("description") or "")[:300],
+    }
+
+
+async def remote_download_youtube(
+    url: str,
+    output_dir: Optional[Path] = None,
+    with_thumbnail: bool = True,
+    mode: str = "best",
+) -> Dict:
+    """调用 Mac app.py 完成下载，并拉回视频与封面到本机。"""
+    server = plugin_config.yt_remote_server.rstrip("/")
+    token = plugin_config.yt_remote_token
+    timeout = plugin_config.yt_remote_timeout
+
+    out_dir = Path(output_dir or plugin_config.yt_dl_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1) 元信息（用于封面消息标题等）；失败不致命，用兜底摘要
+    try:
+        summary = await remote_parse_youtube(url)
+    except Exception as e:
+        logger.warning(f"远程解析元信息失败，使用兜底: {e}")
+        summary = {
+            "id": "", "title": "未知标题", "channel": "", "duration": "",
+            "view_count": "", "upload_date": "", "webpage_url": url,
+            "thumbnail": "", "description": "",
+        }
+
+    # 2) 提交下载任务
+    resp = await _remote_request(
+        "POST", f"{server}/api/download", token=token,
+        json_body={"url": url, "mode": mode}, timeout=60,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"远程下载提交失败: HTTP {resp.status_code} {resp.text[:200]}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"远程下载提交失败: {data['error']}")
+    task_id = data.get("task_id")
+    if not task_id:
+        raise RuntimeError("远程下载提交失败: 未返回 task_id")
+
+    # 3) 轮询任务状态
+    poll_interval = 5
+    elapsed = 0
+    video_path: Optional[str] = None
+    thumb_path: Optional[str] = None
+    while elapsed < timeout:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+        try:
+            r = await _remote_request("GET", f"{server}/api/task/{task_id}", token=token, timeout=30)
+        except Exception:
+            continue
+        if r.status_code != 200:
+            continue
+        t = r.json()
+        status = t.get("status")
+        if status == "done":
+            # 拉回视频
+            dl_url = t.get("download_url")
+            if dl_url:
+                vb = await _remote_bytes(f"{server}{dl_url}", token)
+                if vb:
+                    fname = t.get("filename") or f"{task_id}.mp4"
+                    # 去掉可能带上的任务前缀文件名冲突，使用任务id保底
+                    safe_name = fname if task_id in fname else f"{task_id}_{fname}"
+                    video_path = str(out_dir / safe_name)
+                    Path(video_path).write_bytes(vb)
+            # 拉回封面：优先 app.py 下发的 thumbnail_url，否则回退 YouTube maxres
+            if with_thumbnail:
+                tb_url = t.get("thumbnail_url")
+                if tb_url:
+                    tb = await _remote_bytes(f"{server}{tb_url}", token)
+                    if tb:
+                        thumb_path = str(out_dir / f"{task_id}_thumb.jpg")
+                        Path(thumb_path).write_bytes(tb)
+                elif summary.get("id"):
+                    tb = await _fetch_thumbnail_bytes(summary["id"])
+                    if tb:
+                        thumb_path = str(out_dir / f"{summary['id']}.jpg")
+                        Path(thumb_path).write_bytes(tb)
+            break
+        elif status == "error":
+            raise RuntimeError(f"远程下载失败: {t.get('error', '未知错误')}")
+    else:
+        raise RuntimeError(
+            f"远程下载超时（>{timeout}s），任务 {task_id} 仍在服务器进行中，"
+            f"稍后可去 Mac 端 /downloads 目录取文件"
+        )
 
     return {
         "summary": summary,

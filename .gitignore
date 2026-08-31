@@ -33,3 +33,7 @@ data/
 
 # WorkBuddy local data (memories/configs — not for repo)
 .workbuddy/
+
+# feiTools 下载服务（合并自原 feiTools 仓库；避免把下载产物和 cookies 提交进库）
+feiTools/server/downloads/
+feiTools/server/cookies.txt

@@ -55,3 +55,16 @@ class Config(BaseModel):
     # 从本机浏览器读取 cookies（如 chrome/firefox/safari/edge），可选
     # 仅适合 bot 与浏览器同机的桌面场景；服务器请用 yt_dl_cookies 指向导出的文件。
     yt_dl_cookies_browser: str = ""
+
+    # ── 远程下载服务（将下载卸载到 Mac 上的 app.py）──
+    # 留空 = 使用本机 yt-dlp 直接下载（默认）；
+    # 填写 Mac app.py 地址后，解析/下载改为调用该 HTTP 服务，
+    # 本机无需安装 yt-dlp / ffmpeg / deno。
+    # 例: http://10.211.55.2:5099
+    yt_remote_server: str = ""
+
+    # 与 Mac app.py 的 API_TOKEN 对应的校验令牌，留空表示不校验
+    yt_remote_token: str = ""
+
+    # 单次远程下载最长等待时间（秒），超时则报错
+    yt_remote_timeout: int = 600
