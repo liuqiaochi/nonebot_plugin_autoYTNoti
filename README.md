@@ -131,6 +131,7 @@ yt-dlp -v --simulate "https://www.youtube.com/watch?v=xxxxxxxxxxx" 2>&1 | grep "
 | `YT_DL_JS_RUNTIME` | 否 | `""` | JS 运行时，格式 `deno` 或 `deno:/绝对路径/deno`。留空则由 yt-dlp 从 PATH 查找 deno；**systemd 服务环境建议显式指定绝对路径** |
 | `YT_DL_COOKIES` | 否 | `""` | YouTube cookies 文件路径（Netscape 格式 cookies.txt）。配置后注入登录态，规避 `Sign in to confirm you're not a bot` 风控并解锁 4K/HDR，见下方「Cookies 登录态」 |
 | `YT_DL_COOKIES_BROWSER` | 否 | `""` | 从本机浏览器读取 cookies（`chrome`/`firefox`/`safari`/`edge`）。仅适合桌面同机运行；与 `YT_DL_COOKIES` 二选一，两者都配置时文件优先 |
+| `BILI_DL_COOKIES` | 否 | `""` | Bilibili cookies 文件（Netscape 格式 cookies.txt）路径，**仅本机模式生效**。用于解锁 Bilibili 1080P+ 高画质（未登录态仅 480p）。远程模式由 Mac 端 `app.py` 的 `cookies.txt` 控制，此处忽略 |
 
 ### 获取 YouTube API Key
 
@@ -202,6 +203,8 @@ YT_DL_COOKIES_BROWSER=chrome
 | `YT测试 [handle]` | 测试推送有效性，获取频道最新视频发送给推送用户 |
 | `YT解析 <链接>` | 解析 YouTube 链接，返回标题/频道/时长/播放量/发布日期与封面图（不下载） |
 | `YT下载 <链接>` | 使用 yt-dlp 下载视频（ffmpeg 合并为 mp4）与最优封面图，以两条直发消息返回：① 封面图+元信息 ② 视频 |
+| `BILI解析 <链接>` | 解析 Bilibili 链接（BV/av 号、b23.tv 短链），返回标题/UP主/时长/播放量/封面图（不下载）。另有简写别名 `bv解析`/`bv下载`（`bv`/`Bv`/`BV` 均可） |
+| `BILI下载 <链接>` | 使用 yt-dlp 下载 Bilibili 视频与封面图，以两条直发消息返回：① 封面图+元信息 ② 视频。另有简写别名 `bv解析`/`bv下载` |
 
 > 以上两条指令支持**直接发送链接**，也支持**回复 / 引用**一条含链接的消息来触发（无需在指令后手动贴链接）。
 | `YT帮助` | 以图片展示帮助信息 |
@@ -223,9 +226,32 @@ YT_DL_COOKIES_BROWSER=chrome
   - **视频**：默认 `bestvideo+bestaudio/best`，由 ffmpeg 合并最佳视频流与最佳音频流为 mp4。默认走 tv 客户端，**画质上限约 1080p**（免 cookie，开箱即用）。
   - **封面图**：优先取 YouTube `maxresdefault`（最高清），缺失时回退 `hqdefault`。
   - 结果以**两条直发消息**返回：① 封面图 + 元信息 ② 视频。视频**不放入合并转发节点**——转发内的视频会被 QQ 显示为「已过期」（本地文件本身正常）。视频发送失败时提示本地保存路径。
+- `BILI解析 <链接>` / `BILI下载 <链接>`：解析 / 下载 **Bilibili** 链接（BV 号、av 号、b23.tv 短链），返回字段与消息格式同 YouTube。B 站需要浏览器 UA + Referer，本机模式自动附加；**1080P+ 高画质需配置 `BILI_DL_COOKIES`**（未登录态仅 480p）。
 - 支持**直接发送链接**，也支持**回复 / 引用**一条含链接的消息触发指令。
 - 视频格式由 `YT_DL_FORMAT` 控制，合并依赖 `ffmpeg`（需位于 PATH，或用 `YT_DL_FFMPEG` 指定绝对路径）；下载/解析/封面均复用 `YT_PROXY` 代理。
 - **默认免 cookie**：YouTube 使用 `tv` 电视客户端（与 FeiTools 同源方案），免登录下载（画质上限约 1080p）。前置依赖 `yt-dlp`、`ffmpeg` 与 `deno` 的安装方式，详见上方「🔧 前置依赖（必装）」小节。
+- **远程模式**：若配置了 `YT_REMOTE_SERVER`，解析 / 下载改为调用 Mac 端 `app.py`（已内置 Bilibili 支持），本机无需安装 `yt-dlp` / `ffmpeg` / `deno`。
+
+#### Bilibili Cookie 配置（解锁 1080P+ 高画质）
+
+未配置 Cookie 时，Bilibili 处于未登录态，**最高仅 480p**。配置登录态后可解锁 1080P+。Cookie 的生效位置取决于运行模式：
+
+- **远程模式**（已配 `YT_REMOTE_SERVER`，即你当前的模式）：Cookie 由 **Mac 端 `app.py`** 读取 `feiTools/server/cookies.txt`（Netscape 格式）生效，与 bot 侧配置无关。
+- **本机模式**（未配远程服务器）：在 `.env` 配置 `BILI_DL_COOKIES=/绝对路径/bilibili_cookies.txt`（Netscape 格式）。
+
+**获取方式（任选其一）：**
+
+1. **浏览器扩展导出（最通用）**：PC 浏览器登录 bilibili.com → 安装扩展 *Get cookies.txt LOCALLY* → 在 bilibili 页面导出 **Netscape 格式** → 保存为 `feiTools/server/cookies.txt`（远程模式）或 `BILI_DL_COOKIES` 指向的文件（本机模式）→ 重启 `app.py`（远程模式）。
+2. **仅取 3 个关键值（最省事，app.py 自带生成接口）**：浏览器 F12 → Application → Cookies → `bilibili.com` 复制 `SESSDATA`（必填）、`bili_jct`、`DedeUserID`，POST 给 app.py 自动生成（远程模式）：
+   ```bash
+   curl -X POST http://<app.py地址>/api/cookies \
+     -H "Content-Type: application/json" \
+     -d '{"sessdata":"...","bili_jct":"...","dedeuserid":"..."}'
+   ```
+
+**验证**：`app.py` 启动日志出现 `✅ 检测到 cookies.txt，Bilibili 1080P+ 高画质已解锁`；或 `GET /api/cookies` 返回 `bilibili_cookies: true`。
+
+> ⚠️ `SESSDATA` 等同账号登录凭证，请勿泄露；该文件已被 `.gitignore` 忽略（`feiTools/server/cookies.txt`），不会误提交进仓库。Cookie 会随登录过期，失效后重新导出一次即可。
 
 #### 排障：出现「Sign in to confirm you're not a bot」
 

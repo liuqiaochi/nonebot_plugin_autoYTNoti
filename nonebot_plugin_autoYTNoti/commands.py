@@ -24,6 +24,11 @@ from .downloader import (
     _require_yt_dlp,
     _find_url,
 )
+from .downloader import (
+    parse_bilibili,
+    download_bilibili,
+    _is_bilibili_url,
+)
 
 
 # ========== 工具函数 ==========
@@ -34,6 +39,15 @@ def _cmd(name: str, **kwargs):
     aliases = set()
     suffix = name[2:]  # 去掉 "YT" 前缀
     for prefix in ("yt", "Yt", "yT"):
+        aliases.add(f"{prefix}{suffix}")
+    return on_command(name, aliases=aliases, **kwargs)
+
+
+def _bili_cmd(name: str, **kwargs):
+    """注册 Bilibili 指令，自动添加大小写变体 aliases（bili/Bili/BILI + bv/Bv/BV）"""
+    aliases = set()
+    suffix = name[4:]  # 去掉 "BILI" 前缀
+    for prefix in ("bili", "Bili", "BILI", "bv", "Bv", "BV"):
         aliases.add(f"{prefix}{suffix}")
     return on_command(name, aliases=aliases, **kwargs)
 
@@ -81,6 +95,9 @@ yt_help = _cmd("YT帮助", permission=SUPERUSER, priority=5, block=True)
 
 yt_parse = _cmd("YT解析", permission=SUPERUSER, priority=5, block=True)
 yt_dl = _cmd("YT下载", permission=SUPERUSER, priority=5, block=True)
+
+bili_parse = _bili_cmd("BILI解析", permission=SUPERUSER, priority=5, block=True)
+bili_dl = _bili_cmd("BILI下载", permission=SUPERUSER, priority=5, block=True)
 
 
 # ========== 合并转发工具 ==========
@@ -426,11 +443,15 @@ HELP_TEXT = """\
 [按需解析/下载]
   YT解析 <链接>        解析链接,返回标题/频道/时长/播放量/封面
   YT下载 <链接>        下载视频与封面图(两条消息直发:封面+视频)
+  BILI解析 <链接>      解析 Bilibili 链接(同 YT解析,支持 BV/av/b23.tv)
+  BILI下载 <链接>      下载 Bilibili 视频与封面图(同 YT下载)
+  (以上 BILI 指令另有简写别名 bv/Bv/BV,如 bv解析/bv下载)
     链接支持直接发送,也可回复/引用含链接的消息
     解析/下载默认在机器人本机进行;若配置了 yt_remote_server
     则改为调用远端下载服务(如 Mac 上的 app.py),本机无需 yt-dlp
+    (app.py 已内置 Bilibili 支持:BV/av 号、b23.tv 短链、UA/Referer/cookies)
 
-* 指令不区分大小写 (YT/yt/Yt 均可)
+* 指令不区分大小写 (YT/yt/Yt、BILI/bili/Bili 均可)
 * 推送添加/删除支持直接@用户
 * 所有指令仅超级用户可用"""
 
@@ -551,3 +572,106 @@ async def handle_dl(bot: Bot, event: MessageEvent, args: Message = CommandArg())
             await yt_dl.send(f"视频发送失败: {ve}")
     else:
         await yt_dl.send(f"视频文件未生成，保存目录: {output_dir}")
+
+
+# ---------- Bilibili 链接解析（仅元信息，不下载） ----------
+
+
+@bili_parse.handle()
+async def handle_bili_parse(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
+    url = _extract_youtube_url(event, args)
+    if not url:
+        await bili_parse.finish(
+            "未找到Bilibili链接。可直接发送链接，或回复/引用一条含链接的消息。\n"
+            "示例：BILI解析 https://www.bilibili.com/video/BV1xx411c7mD"
+        )
+
+    if not _is_bilibili_url(url):
+        await bili_parse.finish("链接似乎不是Bilibili链接，请检查后重试")
+
+    if not plugin_config.yt_remote_server:
+        try:
+            _require_yt_dlp()
+        except RuntimeError as e:
+            await bili_parse.finish(str(e))
+
+    await bili_parse.send("正在解析链接...")
+
+    try:
+        summary = await parse_bilibili(url)
+    except Exception as e:
+        await bili_parse.finish(f"解析失败: {e}")
+
+    text = (
+        f"[Bilibili 解析]\n"
+        f"标题: {summary['title']}\n"
+        f"UP主: {summary['channel']}\n"
+        f"时长: {summary['duration']}\n"
+        f"播放量: {summary['view_count']}\n"
+        f"发布: {summary['upload_date']}\n"
+        f"链接: {summary['webpage_url']}"
+    )
+    msg = MessageSegment.text(text)
+
+    # Bilibili 封面用解析返回的 thumbnail 字段（经代理下载为 base64）
+    if summary.get("thumbnail"):
+        img_b64 = await download_image_b64(summary["thumbnail"])
+        if img_b64:
+            msg += MessageSegment.image(img_b64)
+
+    await bili_parse.finish(msg)
+
+
+# ---------- Bilibili 链接下载（视频 + 封面图） ----------
+
+
+@bili_dl.handle()
+async def handle_bili_dl(bot: Bot, event: MessageEvent, args: Message = CommandArg()):
+    url = _extract_youtube_url(event, args)
+    if not url:
+        await bili_dl.finish(
+            "未找到Bilibili链接。可直接发送链接，或回复/引用一条含链接的消息。\n"
+            "示例：BILI下载 https://www.bilibili.com/video/BV1xx411c7mD"
+        )
+
+    if not _is_bilibili_url(url):
+        await bili_dl.finish("链接似乎不是Bilibili链接，请检查后重试")
+
+    if not plugin_config.yt_remote_server:
+        try:
+            _require_yt_dlp()
+        except RuntimeError as e:
+            await bili_dl.finish(str(e))
+
+    await bili_dl.send("正在解析并下载（最高画质，视频+音频合并；封面取最优），请稍候...")
+
+    try:
+        result = await download_bilibili(url)
+    except Exception as e:
+        await bili_dl.finish(f"下载失败: {e}")
+
+    summary = result["summary"]
+    video_path = result.get("video_path")
+    thumb_path = result.get("thumb_path")
+    output_dir = result.get("output_dir")
+
+    info_text = (
+        f"[Bilibili 下载完成]\n"
+        f"标题: {summary['title']}\n"
+        f"UP主: {summary['channel']}\n"
+        f"时长: {summary['duration']}"
+    )
+    cover_node = MessageSegment.text(info_text)
+    if thumb_path:
+        cover_node += MessageSegment.image(thumb_path)
+    await bili_dl.send(cover_node)
+
+    # 视频单独直发：放进合并转发节点会被 QQ 显示为「已过期」
+    if video_path:
+        try:
+            await bili_dl.send(MessageSegment.video(video_path))
+        except Exception as ve:
+            logger.error(f"发送视频文件失败 {video_path}: {ve}")
+            await bili_dl.send(f"视频发送失败: {ve}")
+    else:
+        await bili_dl.send(f"视频文件未生成，保存目录: {output_dir}")

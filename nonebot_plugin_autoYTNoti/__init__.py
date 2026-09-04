@@ -21,6 +21,8 @@ __plugin_meta__ = PluginMetadata(
         "YT测试 [handle] - 测试推送有效性\n"
         "YT解析 <链接> - 解析YouTube链接并显示元信息/封面（支持引用/回复）\n"
         "YT下载 <链接> - 下载YouTube视频与封面图到本地（支持引用/回复）\n"
+        "BILI解析 <链接> - 解析Bilibili链接并显示元信息/封面（支持BV/av/b23.tv）\n"
+        "BILI下载 <链接> - 下载Bilibili视频与封面图到本地（支持引用/回复）\n"
         "YT帮助 - 显示帮助信息(图片)\n"
         "* 指令不区分大小写"
     ),

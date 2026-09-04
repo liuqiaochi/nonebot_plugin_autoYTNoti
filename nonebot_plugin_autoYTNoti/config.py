@@ -56,6 +56,11 @@ class Config(BaseModel):
     # 仅适合 bot 与浏览器同机的桌面场景；服务器请用 yt_dl_cookies 指向导出的文件。
     yt_dl_cookies_browser: str = ""
 
+    # Bilibili cookies 文件路径（Netscape 格式 cookies.txt），可选增强
+    # 用于解锁 Bilibili 1080P+ 高画质（未登录态仅 480p）。仅【本机模式】生效；
+    # 远程模式（yt_remote_server）下由 Mac 端 app.py 自己的 cookies.txt 控制，此处忽略。
+    bili_dl_cookies: str = ""
+
     # ── 远程下载服务（将下载卸载到 Mac 上的 app.py）──
     # 留空 = 使用本机 yt-dlp 直接下载（默认）；
     # 填写 Mac app.py 地址后，解析/下载改为调用该 HTTP 服务，

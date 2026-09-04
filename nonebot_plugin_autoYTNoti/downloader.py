@@ -56,6 +56,11 @@ def _is_youtube_url(url: str) -> bool:
     return bool(re.search(r"(?:youtube\.com|youtu\.be)", url, re.IGNORECASE))
 
 
+def _is_bilibili_url(url: str) -> bool:
+    """粗略判断是否为 Bilibili 链接（bilibili.com / b23.tv / bilibili.tv）"""
+    return bool(re.search(r"(?:bilibili\.com|b23\.tv|bilibili\.tv)", url, re.IGNORECASE))
+
+
 def _find_url(text: str) -> str:
     """从文本中提取第一个 http(s) 链接"""
     if not text:
@@ -115,6 +120,39 @@ def _ydl_opts(extra: Optional[Dict] = None) -> Dict:
     if not (cookies_file or cookies_browser):
         opts["extractor_args"] = {"youtube": {"player_client": ["tv"]}}
 
+    if extra:
+        opts.update(extra)
+    return opts
+
+
+def _bili_ydl_opts(extra: Optional[Dict] = None) -> Dict:
+    """
+    Bilibili 专用 yt-dlp 选项（本机模式）。
+    关键：B 站需要浏览器 UA + Referer，否则返回 412 Precondition Failed。
+    画质策略与 YouTube 一致（强制 avc1+AAC 合并为 mp4，保证全平台可播放）。
+    可选 cookies（bili_dl_cookies）用于解锁 1080P+。
+    """
+    opts: Dict = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "nocheckcertificate": True,
+        "proxy": plugin_config.yt_proxy or None,
+        "socket_timeout": 60,
+        "retries": 3,
+        "merge_output_format": "mp4",
+        "user_agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "referer": "https://www.bilibili.com",
+        "http_headers": {"Referer": "https://www.bilibili.com"},
+    }
+    if plugin_config.yt_dl_ffmpeg:
+        opts["ffmpeg_location"] = plugin_config.yt_dl_ffmpeg
+    cookies = (getattr(plugin_config, "bili_dl_cookies", "") or "").strip()
+    if cookies:
+        opts["cookiefile"] = cookies
     if extra:
         opts.update(extra)
     return opts
@@ -300,6 +338,118 @@ async def download_youtube(
         if data:
             thumb_path = str(out_dir / f"{video_id}.jpg")
             Path(thumb_path).write_bytes(data)
+
+    return {
+        "summary": summary,
+        "video_path": video_path,
+        "thumb_path": thumb_path,
+        "output_dir": str(out_dir),
+    }
+
+
+# ========== Bilibili 解析 / 下载 ==========
+#
+# 远程模式（yt_remote_server）下与 YouTube 共用 app.py 的 /api/info、/api/download，
+# 这些接口按 URL 自动识别平台，因此对 Bilibili 同样适用。
+# 封面处理差异：app.py 的任务状态不回传 B 站封面，故封面统一由解析返回的
+# summary["thumbnail"] 字段拉取（见下方各函数）。
+
+
+async def parse_bilibili(url: str) -> Dict:
+    """
+    解析 Bilibili 链接，返回清洗后的元信息字典（不下载任何文件）。
+    字段同 parse_youtube：id/title/channel/duration/view_count/upload_date/webpage_url/thumbnail/description
+    """
+    if plugin_config.yt_remote_server:
+        # 远程接口平台无关，直接复用（函数名虽含 youtube，逻辑通用）
+        return await remote_parse_youtube(url)
+
+    yt_dlp = _require_yt_dlp()
+
+    def _run():
+        opts = _bili_ydl_opts({"skip_download": True})
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False)
+
+    info = await asyncio.get_running_loop().run_in_executor(None, _run)
+    return _summarize(info)
+
+
+async def download_bilibili(
+    url: str,
+    output_dir: Optional[Path] = None,
+    with_thumbnail: bool = True,
+    mode: str = "best",
+) -> Dict:
+    """
+    下载 Bilibili 视频（最高画质，ffmpeg 合并为 mp4）与封面图到本地目录。
+    返回结构同 download_youtube。
+    """
+    if plugin_config.yt_remote_server:
+        # 封面不在远程任务回传中，先让远程接口拉视频（不拉封面），再单独取解析返回的封面
+        result = await remote_download_youtube(
+            url, output_dir=output_dir, with_thumbnail=False, mode=mode
+        )
+        if with_thumbnail:
+            tb_url = (result.get("summary") or {}).get("thumbnail")
+            if tb_url:
+                server = plugin_config.yt_remote_server.rstrip("/")
+                token = plugin_config.yt_remote_token
+                # B 站封面是绝对 URL（https://i0.hdslb.com/...），直接拉取；
+                # 若为相对路径（理论上不会）才拼远程服务地址
+                src = tb_url if tb_url.startswith(("http://", "https://")) else f"{server}{tb_url}"
+                tb = await _remote_bytes(src, token)
+                if tb:
+                    out_dir = Path(result.get("output_dir") or plugin_config.yt_dl_dir).resolve()
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    bili_id = (result.get("summary") or {}).get("id") or "cover"
+                    thumb_path = str(out_dir / f"{bili_id}.jpg")
+                    Path(thumb_path).write_bytes(tb)
+                    result["thumb_path"] = thumb_path
+        return result
+
+    yt_dlp = _require_yt_dlp()
+
+    out_dir = Path(output_dir or plugin_config.yt_dl_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _run():
+        opts = _bili_ydl_opts({
+            "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
+            "format": plugin_config.yt_dl_format,
+            "writethumbnail": False,
+            "continuedl": True,
+        })
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=True)
+
+    info = await asyncio.get_running_loop().run_in_executor(None, _run)
+    summary = _summarize(info)
+    bili_id = info.get("id")
+
+    video_path: Optional[str] = None
+    requested = info.get("requested_downloads") or []
+    if requested:
+        video_path = requested[0].get("filepath")
+    if not video_path and bili_id:
+        for p in out_dir.glob(f"{bili_id}.*"):
+            if p.suffix.lower() not in _THUMB_EXTS:
+                video_path = str(p)
+                break
+
+    # 封面：优先用解析返回的 thumbnail 字段
+    thumb_path: Optional[str] = None
+    if with_thumbnail:
+        tb_url = summary.get("thumbnail")
+        if tb_url:
+            try:
+                async with httpx.AsyncClient(**_http_kwargs()) as client:
+                    r = await client.get(tb_url)
+                    if r.status_code == 200 and r.content:
+                        thumb_path = str(out_dir / f"{bili_id or 'cover'}.jpg")
+                        Path(thumb_path).write_bytes(r.content)
+            except Exception as e:
+                logger.debug(f"下载 Bilibili 封面失败 {tb_url}: {e}")
 
     return {
         "summary": summary,
