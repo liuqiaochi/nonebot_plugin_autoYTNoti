@@ -61,6 +61,16 @@ class Config(BaseModel):
     # 远程模式（yt_remote_server）下由 Mac 端 app.py 自己的 cookies.txt 控制，此处忽略。
     bili_dl_cookies: str = ""
 
+    # Facebook cookies 文件路径（Netscape 格式 cookies.txt），可选增强
+    # 用于解锁 Facebook 受限/私密视频（公开视频多可免登录）。仅【本机模式】生效；
+    # 远程模式（yt_remote_server）下由 Mac 端 app.py 的 <域名>_cookies.txt 控制，此处忽略。
+    fb_dl_cookies: str = ""
+
+    # X / Twitter cookies 文件路径（Netscape 格式 cookies.txt），强烈建议配置
+    # X 自 2023 起强制登录，无 cookies 几乎无法下载。仅【本机模式】生效；
+    # 远程模式（yt_remote_server）下由 Mac 端 app.py 的 x.com_cookies.txt 控制，此处忽略。
+    x_dl_cookies: str = ""
+
     # ── 远程下载服务（将下载卸载到 Mac 上的 app.py）──
     # 留空 = 使用本机 yt-dlp 直接下载（默认）；
     # 填写 Mac app.py 地址后，解析/下载改为调用该 HTTP 服务，

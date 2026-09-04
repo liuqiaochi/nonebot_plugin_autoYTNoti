@@ -37,3 +37,6 @@ data/
 # feiTools 下载服务（合并自原 feiTools 仓库；避免把下载产物和 cookies 提交进库）
 feiTools/server/downloads/
 feiTools/server/cookies.txt
+# 按域名分文件存放的 cookies（www.bilibili.com_cookies.txt / www.facebook.com_cookies.txt / x.com_cookies.txt）
+# 均为账号登录凭证，严禁入库
+feiTools/server/*_cookies.txt

@@ -36,7 +36,22 @@ DOWNLOAD_DIR = Path(os.environ.get('DOWNLOAD_DIR', './downloads'))
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 MAX_FILE_AGE = 3600  # 文件保留 1 小时
 PORT = int(os.environ.get('PORT', 5001))
-COOKIES_FILE = Path(__file__).parent / 'cookies.txt'
+COOKIES_DIR = Path(__file__).parent
+
+# 按域名命名的 cookie 文件：<domain>_cookies.txt，存放于本脚本同目录。
+# 与插件端约定一致；均为账号登录凭证，已被 .gitignore 忽略，严禁入库。
+COOKIE_FILE_MAP = {
+    'bilibili.com': 'www.bilibili.com_cookies.txt',
+    'b23.tv': 'www.bilibili.com_cookies.txt',
+    'bilibili.tv': 'www.bilibili.com_cookies.txt',
+    'facebook.com': 'www.facebook.com_cookies.txt',
+    'fb.watch': 'www.facebook.com_cookies.txt',
+    'instagram.com': 'www.facebook.com_cookies.txt',
+    'x.com': 'x.com_cookies.txt',
+    'twitter.com': 'x.com_cookies.txt',
+}
+# Bilibili 专用（/api/cookies 接口生成/管理）
+BILI_COOKIE_FILE = COOKIES_DIR / 'www.bilibili.com_cookies.txt'
 
 # ── YouTube 绕过 bot 检测参数 ──
 # player 客户端自动选择规则（详见 _resolve_player_client）：
@@ -155,6 +170,33 @@ def is_bilibili(url):
     return any(d in url for d in ['bilibili.com', 'b23.tv', 'bilibili.tv'])
 
 
+def is_youtube(url):
+    """判断是否为 YouTube 链接"""
+    return any(d in url for d in ['youtube.com', 'youtu.be'])
+
+
+def is_facebook(url):
+    """判断是否为 Facebook / Instagram 链接"""
+    return any(d in url for d in ['facebook.com', 'fb.watch', 'instagram.com'])
+
+
+def is_x(url):
+    """判断是否为 X / Twitter 链接"""
+    return any(d in url for d in ['x.com', 'twitter.com'])
+
+
+def site_cookie_file(url):
+    """按 URL 域名匹配 server 目录下的 <domain>_cookies.txt；无效或缺失返回 None"""
+    for domain, fname in COOKIE_FILE_MAP.items():
+        if domain in url:
+            p = COOKIES_DIR / fname
+            if p.exists():
+                valid, _ = validate_netscape_cookies(p)
+                if valid:
+                    return p
+    return None
+
+
 def validate_netscape_cookies(filepath):
     """检查 cookies.txt 是否为有效的 Netscape 格式"""
     try:
@@ -198,11 +240,52 @@ def bilibili_extra_args(url):
         '--referer', 'https://www.bilibili.com',
         '--add-header', 'Referer: https://www.bilibili.com',
     ]
-    # 如果存在有效的 cookies.txt，自动使用（用于解锁 1080P+ 画质）
-    if COOKIES_FILE.exists():
-        valid, _ = validate_netscape_cookies(COOKIES_FILE)
-        if valid:
-            args += ['--cookies', str(COOKIES_FILE)]
+    # 若存在该域名对应的有效 cookies 文件，自动使用（用于解锁 1080P+ 画质）
+    ck = site_cookie_file(url)
+    if ck:
+        args += ['--cookies', str(ck)]
+    return args
+
+
+def facebook_extra_args(url):
+    """Facebook 专用 yt-dlp 参数；公开视频多可免登录，受限/私密需 cookies"""
+    if not is_facebook(url):
+        return []
+    args = []
+    ck = site_cookie_file(url)
+    if ck:
+        args += ['--cookies', str(ck)]
+    args += ['--extractor-retries', '3', '--retry-sleep', 'linear=1']
+    return args
+
+
+def x_extra_args(url):
+    """X/Twitter 专用 yt-dlp 参数；X 自 2023 起强制登录，必须带 cookies"""
+    if not is_x(url):
+        return []
+    args = []
+    ck = site_cookie_file(url)
+    if ck:
+        args += ['--cookies', str(ck)]
+    args += ['--extractor-retries', '3', '--retry-sleep', 'linear=1']
+    return args
+
+
+def platform_args(url):
+    """按 URL 平台返回 yt-dlp 平台专用参数（不含通用 -o 等）"""
+    if is_youtube(url):
+        return _yt_common_args()
+    if is_bilibili(url):
+        return bilibili_extra_args(url)
+    if is_facebook(url):
+        return facebook_extra_args(url)
+    if is_x(url):
+        return x_extra_args(url)
+    # 未知平台：尝试按域名匹配 cookie
+    args = []
+    ck = site_cookie_file(url)
+    if ck:
+        args += ['--cookies', str(ck)]
     return args
 
 
@@ -210,39 +293,53 @@ def bilibili_extra_args(url):
 # 路由
 # ═══════════════════════════════════════════════════════════
 
+def _cookie_status():
+    """汇总各平台 cookie 文件状态（用于 / 与启动日志）"""
+    status = {}
+    for name, fname in {
+        'bilibili': 'www.bilibili.com_cookies.txt',
+        'facebook': 'www.facebook.com_cookies.txt',
+        'x': 'x.com_cookies.txt',
+    }.items():
+        p = COOKIES_DIR / fname
+        if p.exists():
+            valid, msg = validate_netscape_cookies(p)
+            status[name] = {'exists': True, 'valid': valid, 'detail': msg}
+        else:
+            status[name] = {'exists': False, 'valid': False, 'detail': '文件不存在'}
+    return status
+
+
 @app.route('/')
 def index():
-    cookies_valid = False
-    cookies_msg = ''
-    if COOKIES_FILE.exists():
-        cookies_valid, cookies_msg = validate_netscape_cookies(COOKIES_FILE)
+    status = _cookie_status()
     return jsonify({
         'service': '老肥工具箱视频下载服务',
         'status': 'running',
         'ffmpeg': HAS_FFMPEG,
-        'bilibili_cookies': cookies_valid,
-        'cookies_detail': cookies_msg,
+        'bilibili_cookies': status.get('bilibili', {}).get('valid', False),
+        'cookies': status,
         'endpoints': ['/api/info', '/api/formats', '/api/download', '/api/task/<id>', '/api/cookies', '/downloads/<file>']
     })
 
 
 @app.route('/api/cookies', methods=['GET', 'POST', 'DELETE'])
 def manage_cookies():
-    """管理 Bilibili Cookie 文件"""
+    """管理 Bilibili Cookie 文件（按域名命名：www.bilibili.com_cookies.txt）"""
     if request.method == 'GET':
-        if not COOKIES_FILE.exists():
+        if not BILI_COOKIE_FILE.exists():
             return jsonify({'exists': False, 'valid': False})
-        valid, msg = validate_netscape_cookies(COOKIES_FILE)
+        valid, msg = validate_netscape_cookies(BILI_COOKIE_FILE)
         return jsonify({'exists': True, 'valid': valid, 'detail': msg})
 
     if request.method == 'DELETE':
         try:
-            COOKIES_FILE.unlink(missing_ok=True)
-            return jsonify({'ok': True, 'message': 'cookies.txt 已删除'})
+            BILI_COOKIE_FILE.unlink(missing_ok=True)
+            return jsonify({'ok': True, 'message': 'www.bilibili.com_cookies.txt 已删除'})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    # POST: 通过 SESSDATA 等值生成 Netscape 格式 cookies.txt
+    # POST: 通过 SESSDATA 等值生成 Netscape 格式 cookies 文件
     data = request.get_json() or {}
     sessdata = data.get('sessdata', '').strip()
     bili_jct = data.get('bili_jct', '').strip()
@@ -253,8 +350,8 @@ def manage_cookies():
 
     try:
         content = generate_netscape_cookies(sessdata, bili_jct, dedeuserid)
-        COOKIES_FILE.write_text(content, encoding='utf-8')
-        return jsonify({'ok': True, 'message': 'cookies.txt 已生成（Netscape 格式）'})
+        BILI_COOKIE_FILE.write_text(content, encoding='utf-8')
+        return jsonify({'ok': True, 'message': 'www.bilibili.com_cookies.txt 已生成（Netscape 格式）'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -270,7 +367,7 @@ def video_info():
     try:
         result = subprocess.run(
             ['yt-dlp', '--no-update', '--dump-json', '--no-download']
-            + bilibili_extra_args(url) + _yt_common_args() + [url],
+            + platform_args(url) + [url],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
@@ -303,7 +400,7 @@ def video_formats():
     try:
         result = subprocess.run(
             ['yt-dlp', '--no-update', '-J', '--no-download']
-            + bilibili_extra_args(url) + _yt_common_args() + [url],
+            + platform_args(url) + [url],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
@@ -381,10 +478,8 @@ def start_download():
                 else:
                     cmd += ['-f', 'best[vcodec^=avc1]/best']
 
-            # Bilibili 专用参数（User-Agent + Referer + Cookie）
-            cmd += bilibili_extra_args(url)
-            # YouTube 专用参数（player 客户端 + 可选 cookies / PO Token，绕过 bot 检测）
-            cmd += _yt_common_args()
+            # 按平台自动选择专用参数（YouTube player 客户端 / Bilibili UA+Referer / FB / X cookies）
+            cmd += platform_args(url)
             cmd.append(url)
 
             tasks[task_id]['cmd'] = ' '.join(cmd)
@@ -477,14 +572,15 @@ if __name__ == '__main__':
     else:
         print(f'⚠️  未检测到 ffmpeg！视频将以单文件格式下载（画质可能受限），音频无法转为 mp3')
         print(f'   安装方法: apt install ffmpeg (Ubuntu) / yum install ffmpeg (CentOS) / brew install ffmpeg (macOS)')
-    if COOKIES_FILE.exists():
-        valid, msg = validate_netscape_cookies(COOKIES_FILE)
-        if valid:
-            print(f'✅ 检测到 cookies.txt（{msg}），Bilibili 1080P+ 高画质已解锁')
+    status = _cookie_status()
+    for name, info in status.items():
+        if info.get('valid'):
+            print(f'✅ 检测到 {name} cookie（{info["detail"]}）')
+        elif info.get('exists'):
+            print(f'⚠️  {name} cookie 文件存在但格式无效：{info["detail"]}')
         else:
-            print(f'⚠️  cookies.txt 格式无效：{msg}')
-            print(f'   请通过页面「设置 Cookie」功能重新配置，或删除该文件')
-    else:
-        print(f'ℹ️  未检测到 cookies.txt，Bilibili 最高仅支持 480p（未登录）')
-        print(f'   如需 1080P+ 画质，请在页面中设置 Cookie，或通过 /api/cookies 接口配置')
+            if name == 'bilibili':
+                print(f'ℹ️  未检测到 Bilibili cookie，B站最高仅支持 480p（未登录）')
+            else:
+                print(f'ℹ️  未检测到 {name} cookie，{name} 解析/下载可能受限')
     app.run(host='0.0.0.0', port=PORT, debug=False)

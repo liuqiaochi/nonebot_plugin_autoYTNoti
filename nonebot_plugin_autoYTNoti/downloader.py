@@ -61,6 +61,16 @@ def _is_bilibili_url(url: str) -> bool:
     return bool(re.search(r"(?:bilibili\.com|b23\.tv|bilibili\.tv)", url, re.IGNORECASE))
 
 
+def _is_facebook_url(url: str) -> bool:
+    """粗略判断是否为 Facebook / Instagram 链接"""
+    return bool(re.search(r"(?:facebook\.com|fb\.watch|instagram\.com)", url, re.IGNORECASE))
+
+
+def _is_x_url(url: str) -> bool:
+    """粗略判断是否为 X / Twitter 链接"""
+    return bool(re.search(r"(?:x\.com|twitter\.com)", url, re.IGNORECASE))
+
+
 def _find_url(text: str) -> str:
     """从文本中提取第一个 http(s) 链接"""
     if not text:
@@ -151,6 +161,56 @@ def _bili_ydl_opts(extra: Optional[Dict] = None) -> Dict:
     if plugin_config.yt_dl_ffmpeg:
         opts["ffmpeg_location"] = plugin_config.yt_dl_ffmpeg
     cookies = (getattr(plugin_config, "bili_dl_cookies", "") or "").strip()
+    if cookies:
+        opts["cookiefile"] = cookies
+    if extra:
+        opts.update(extra)
+    return opts
+
+
+def _fb_ydl_opts(extra: Optional[Dict] = None) -> Dict:
+    """
+    Facebook 本机模式 yt-dlp 选项。公开视频多可免登录下载；
+    受限/私密视频可用 fb_dl_cookies 解锁（Netscape 格式 cookies 文件路径）。
+    """
+    opts: Dict = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "nocheckcertificate": True,
+        "proxy": plugin_config.yt_proxy or None,
+        "socket_timeout": 60,
+        "retries": 3,
+        "merge_output_format": "mp4",
+    }
+    if plugin_config.yt_dl_ffmpeg:
+        opts["ffmpeg_location"] = plugin_config.yt_dl_ffmpeg
+    cookies = (getattr(plugin_config, "fb_dl_cookies", "") or "").strip()
+    if cookies:
+        opts["cookiefile"] = cookies
+    if extra:
+        opts.update(extra)
+    return opts
+
+
+def _x_ydl_opts(extra: Optional[Dict] = None) -> Dict:
+    """
+    X / Twitter 本机模式 yt-dlp 选项。X 自 2023 起强制登录，
+    必须带 cookies（x_dl_cookies 指向 Netscape 格式 cookies 文件）才能稳定下载。
+    """
+    opts: Dict = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "nocheckcertificate": True,
+        "proxy": plugin_config.yt_proxy or None,
+        "socket_timeout": 60,
+        "retries": 3,
+        "merge_output_format": "mp4",
+    }
+    if plugin_config.yt_dl_ffmpeg:
+        opts["ffmpeg_location"] = plugin_config.yt_dl_ffmpeg
+    cookies = (getattr(plugin_config, "x_dl_cookies", "") or "").strip()
     if cookies:
         opts["cookiefile"] = cookies
     if extra:
@@ -450,6 +510,200 @@ async def download_bilibili(
                         Path(thumb_path).write_bytes(r.content)
             except Exception as e:
                 logger.debug(f"下载 Bilibili 封面失败 {tb_url}: {e}")
+
+    return {
+        "summary": summary,
+        "video_path": video_path,
+        "thumb_path": thumb_path,
+        "output_dir": str(out_dir),
+    }
+
+
+# ========== Facebook 解析 / 下载 ==========
+#
+# 远程模式（yt_remote_server）下与 Bilibili 共用 app.py 的平台无关接口；
+# app.py 现已支持按 <域名>_cookies.txt 自动匹配 Facebook cookie。
+
+
+async def parse_facebook(url: str) -> Dict:
+    """解析 Facebook 链接，返回清洗后的元信息字典（不下载任何文件）。"""
+    if plugin_config.yt_remote_server:
+        return await remote_parse_youtube(url)
+    yt_dlp = _require_yt_dlp()
+
+    def _run():
+        opts = _fb_ydl_opts({"skip_download": True})
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False)
+
+    info = await asyncio.get_running_loop().run_in_executor(None, _run)
+    return _summarize(info)
+
+
+async def download_facebook(
+    url: str,
+    output_dir: Optional[Path] = None,
+    with_thumbnail: bool = True,
+    mode: str = "best",
+) -> Dict:
+    """下载 Facebook 视频（最高画质，ffmpeg 合并为 mp4）与封面图到本地目录。"""
+    if plugin_config.yt_remote_server:
+        result = await remote_download_youtube(
+            url, output_dir=output_dir, with_thumbnail=False, mode=mode
+        )
+        if with_thumbnail:
+            tb_url = (result.get("summary") or {}).get("thumbnail")
+            if tb_url:
+                server = plugin_config.yt_remote_server.rstrip("/")
+                token = plugin_config.yt_remote_token
+                src = tb_url if tb_url.startswith(("http://", "https://")) else f"{server}{tb_url}"
+                tb = await _remote_bytes(src, token)
+                if tb:
+                    out_dir = Path(result.get("output_dir") or plugin_config.yt_dl_dir).resolve()
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    fb_id = (result.get("summary") or {}).get("id") or "cover"
+                    thumb_path = str(out_dir / f"{fb_id}.jpg")
+                    Path(thumb_path).write_bytes(tb)
+                    result["thumb_path"] = thumb_path
+        return result
+
+    yt_dlp = _require_yt_dlp()
+    out_dir = Path(output_dir or plugin_config.yt_dl_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _run():
+        opts = _fb_ydl_opts({
+            "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
+            "format": plugin_config.yt_dl_format,
+            "writethumbnail": False,
+            "continuedl": True,
+        })
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=True)
+
+    info = await asyncio.get_running_loop().run_in_executor(None, _run)
+    summary = _summarize(info)
+    fb_id = info.get("id")
+
+    video_path: Optional[str] = None
+    requested = info.get("requested_downloads") or []
+    if requested:
+        video_path = requested[0].get("filepath")
+    if not video_path and fb_id:
+        for p in out_dir.glob(f"{fb_id}.*"):
+            if p.suffix.lower() not in _THUMB_EXTS:
+                video_path = str(p)
+                break
+
+    thumb_path: Optional[str] = None
+    if with_thumbnail:
+        tb_url = summary.get("thumbnail")
+        if tb_url:
+            try:
+                async with httpx.AsyncClient(**_http_kwargs()) as client:
+                    r = await client.get(tb_url)
+                    if r.status_code == 200 and r.content:
+                        thumb_path = str(out_dir / f"{fb_id or 'cover'}.jpg")
+                        Path(thumb_path).write_bytes(r.content)
+            except Exception as e:
+                logger.debug(f"下载 Facebook 封面失败 {tb_url}: {e}")
+
+    return {
+        "summary": summary,
+        "video_path": video_path,
+        "thumb_path": thumb_path,
+        "output_dir": str(out_dir),
+    }
+
+
+# ========== X / Twitter 解析 / 下载 ==========
+#
+# X 自 2023 起强制登录，必须带 cookies（对应 x.com_cookies.txt）才能稳定下载；
+# 远程模式复用 app.py 平台无关接口（app.py 已按域名匹配 X cookie）。
+
+
+async def parse_x(url: str) -> Dict:
+    """解析 X/Twitter 链接，返回清洗后的元信息字典（不下载任何文件）。"""
+    if plugin_config.yt_remote_server:
+        return await remote_parse_youtube(url)
+    yt_dlp = _require_yt_dlp()
+
+    def _run():
+        opts = _x_ydl_opts({"skip_download": True})
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False)
+
+    info = await asyncio.get_running_loop().run_in_executor(None, _run)
+    return _summarize(info)
+
+
+async def download_x(
+    url: str,
+    output_dir: Optional[Path] = None,
+    with_thumbnail: bool = True,
+    mode: str = "best",
+) -> Dict:
+    """下载 X/Twitter 视频（最高画质，ffmpeg 合并为 mp4）与封面图到本地目录。"""
+    if plugin_config.yt_remote_server:
+        result = await remote_download_youtube(
+            url, output_dir=output_dir, with_thumbnail=False, mode=mode
+        )
+        if with_thumbnail:
+            tb_url = (result.get("summary") or {}).get("thumbnail")
+            if tb_url:
+                server = plugin_config.yt_remote_server.rstrip("/")
+                token = plugin_config.yt_remote_token
+                src = tb_url if tb_url.startswith(("http://", "https://")) else f"{server}{tb_url}"
+                tb = await _remote_bytes(src, token)
+                if tb:
+                    out_dir = Path(result.get("output_dir") or plugin_config.yt_dl_dir).resolve()
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    x_id = (result.get("summary") or {}).get("id") or "cover"
+                    thumb_path = str(out_dir / f"{x_id}.jpg")
+                    Path(thumb_path).write_bytes(tb)
+                    result["thumb_path"] = thumb_path
+        return result
+
+    yt_dlp = _require_yt_dlp()
+    out_dir = Path(output_dir or plugin_config.yt_dl_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _run():
+        opts = _x_ydl_opts({
+            "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
+            "format": plugin_config.yt_dl_format,
+            "writethumbnail": False,
+            "continuedl": True,
+        })
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=True)
+
+    info = await asyncio.get_running_loop().run_in_executor(None, _run)
+    summary = _summarize(info)
+    x_id = info.get("id")
+
+    video_path: Optional[str] = None
+    requested = info.get("requested_downloads") or []
+    if requested:
+        video_path = requested[0].get("filepath")
+    if not video_path and x_id:
+        for p in out_dir.glob(f"{x_id}.*"):
+            if p.suffix.lower() not in _THUMB_EXTS:
+                video_path = str(p)
+                break
+
+    thumb_path: Optional[str] = None
+    if with_thumbnail:
+        tb_url = summary.get("thumbnail")
+        if tb_url:
+            try:
+                async with httpx.AsyncClient(**_http_kwargs()) as client:
+                    r = await client.get(tb_url)
+                    if r.status_code == 200 and r.content:
+                        thumb_path = str(out_dir / f"{x_id or 'cover'}.jpg")
+                        Path(thumb_path).write_bytes(r.content)
+            except Exception as e:
+                logger.debug(f"下载 X 封面失败 {tb_url}: {e}")
 
     return {
         "summary": summary,
